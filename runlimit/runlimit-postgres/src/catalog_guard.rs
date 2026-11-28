@@ -30,7 +30,11 @@
 //! entry under Clippy and checks that only `Statement::query` and the three
 //! bundled migrators suppress it.
 
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 mod detector;
 mod fields;
@@ -60,7 +64,15 @@ const CATALOG_FUNCTIONS: &[&str] = &[
 /// A statement the limiters send is a query or a data change, never a
 /// command such as `EXECUTE` that runs SQL this guard cannot see.
 fn command_form(sql: &str) -> Option<String> {
-    let first = detector::strip_comments_and_quotes(sql)
+    let code = detector::strip_comments_and_quotes(sql);
+    // One command only: anything after a semicolon is a second one.
+    if code
+        .split_once(';')
+        .is_some_and(|(_, rest)| !rest.trim().is_empty())
+    {
+        return Some("more than one command".to_owned());
+    }
+    let first = code
         .trim_start()
         .split(|c: char| !c.is_ascii_alphabetic())
         .next()
@@ -70,25 +82,68 @@ fn command_form(sql: &str) -> Option<String> {
         .then(|| format!("a {first:?} command, not a query or data change"))
 }
 
-/// The tables the bundled migrations create, with their columns.
-fn migrated_tables() -> std::collections::BTreeMap<String, BTreeSet<String>> {
-    let migrations: Vec<&str> = [
-        &crate::MIGRATOR,
-        &crate::GCRA_MIGRATOR,
-        &crate::attempts::ATTEMPTS_MIGRATOR,
-    ]
-    .into_iter()
-    .flat_map(|migrator| migrator.iter())
-    .map(|migration| migration.sql.as_str())
-    .collect();
-    fields::tables(migrations)
+/// Each family's migrated tables and their columns. The guard cannot read
+/// what a migration's functions and triggers leave behind, so
+/// `tests/migrate.rs` compares this list with each freshly migrated history.
+const MIGRATED_COLUMNS: &str = include_str!("catalog_guard/migrated_columns.txt");
+
+/// The tables `statement`'s own family installs, with their columns. Each
+/// history installs alone, so a statement reads only its family's tables;
+/// the session family reads none.
+fn family_tables(statement: statements::Statement) -> BTreeMap<String, BTreeSet<String>> {
+    let family = match statement {
+        statements::Statement::FixedWindow(_) => "fixed_window",
+        statements::Statement::Gcra(_) => "gcra",
+        statements::Statement::Attempts(_) => "attempts",
+        statements::Statement::Session(_) => return BTreeMap::new(),
+    };
+    MIGRATED_COLUMNS
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next() == Some(family)).then(|| {
+                let table = words.next().expect("each listed table has a name");
+                (table.to_owned(), words.map(str::to_owned).collect())
+            })
+        })
+        .collect()
+}
+
+/// An inventory of the named tables and their columns.
+fn inventory(tables: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+    tables
+        .iter()
+        .map(|(table, columns)| {
+            (
+                (*table).to_owned(),
+                columns.iter().map(|c| (*c).to_owned()).collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn each_family_reads_only_the_tables_its_history_installs() {
+    let fixed_window = family_tables(statements::Statement::FixedWindow(
+        statements::fixed_window::Id::ALL[0],
+    ));
+    assert!(fixed_window.contains_key("runlimit_fixed_windows"));
+    assert!(!fixed_window.contains_key("runlimit_gcra"));
+    assert!(!fixed_window.contains_key("runlimit_attempts"));
+    assert!(
+        family_tables(statements::Statement::Session(
+            statements::session::Id::ALL[0]
+        ))
+        .is_empty()
+    );
 }
 
 #[test]
 fn every_statement_qualifies_its_catalog_functions_and_types() {
-    let tables = migrated_tables();
     let mut violations = Vec::new();
     for (name, statement) in statements::all() {
+        let tables = family_tables(statement);
         violations.extend(
             unqualified(statement.sql())
                 .into_iter()
@@ -179,17 +234,18 @@ fn only_the_listed_catalog_functions_may_be_called() {
     }
     assert_eq!(command_form("-- note\nWITH x AS (SELECT 1) SELECT 1"), None);
     assert!(command_form("/* SELECT */ EXECUTE cached_check").is_some());
+    assert_eq!(
+        command_form("SELECT 1; SELECT 2"),
+        Some("more than one command".to_owned())
+    );
+    assert_eq!(command_form("SELECT 1; -- done\n"), None);
 }
 
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
 // such column, so a qualified name must be a column of its declared receiver.
 #[test]
 fn a_qualified_name_must_be_a_column_of_its_receiver() {
-    let tables = fields::tables([
-        "CREATE TABLE t (id BIGINT PRIMARY KEY, used BIGINT NOT NULL, \
-         CONSTRAINT used_positive CHECK (used > 0)); ALTER TABLE t ADD COLUMN shard SMALLINT;",
-        "CREATE TABLE u (id BIGINT, label TEXT)",
-    ]);
+    let tables = inventory(&[("t", &["id", "shard", "used"]), ("u", &["id", "label"])]);
     for sql in [
         "SELECT a.row_to_json FROM t AS a",
         // An output alias of the same name is not a column of `a`.
@@ -286,6 +342,7 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
         "SELECT a.id FROM t AS a FOR NO KEY UPDATE OF a",
+        "WITH s AS (SELECT 1 IS DISTINCT FROM 2 AS changed) SELECT s.changed FROM s",
         "SELECT a.id FROM t AS a JOIN u AS b ON ARRAY[a.id, b.id] = $1, u AS c WHERE c.id = a.id",
         "WITH b(n) AS (SELECT 1), a AS (SELECT b.n FROM b) SELECT a.n FROM a",
         "WITH RECURSIVE a(n) AS (SELECT 1 UNION ALL SELECT a.n FROM a) SELECT a.n FROM a",

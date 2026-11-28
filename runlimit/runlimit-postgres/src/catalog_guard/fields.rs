@@ -5,8 +5,10 @@
 //! must be a column of its receiver, and the receiver must be declared in a
 //! form whose columns are stated, never inferred:
 //!
-//! - a table the bundled migrations leave (`schema`), by its name or through
-//!   an alias (`FROM table AS x`);
+//! - a table the statement's own family installs, as
+//!   `migrated_columns.txt` lists it, by its name or through an alias
+//!   (`FROM table AS x`); a write target (`INSERT INTO`, `UPDATE`,
+//!   `DELETE FROM`) is always such a table, even beside a CTE of its name;
 //! - a common table expression or `FROM` item with an explicit column list
 //!   (`name(a, b) AS (...)`, `... AS x(a, b)`), or an alias of one;
 //! - a common table expression or subquery without one, whose columns are
@@ -26,13 +28,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::detector::strip_comments_and_quotes;
 
 mod from_items;
-mod schema;
 
 use from_items::{
     ColumnList, FromItem, ItemSource, column_list, from_item, in_call_syntax, next_from_item,
     opens_query,
 };
-pub(super) use schema::tables;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
@@ -169,10 +169,19 @@ fn output_names(tokens: &[Token], start: usize, end: usize) -> Option<BTreeSet<S
         } else if is(tokens, list, "distinct") || is(tokens, list, "all") {
             list += 1;
         }
-        (
-            list,
-            top_level_word(tokens, list, end, &LIST_ENDS).unwrap_or(end),
-        )
+        // The FROM of `IS DISTINCT FROM` is a comparison, not the FROM clause.
+        let mut from = list;
+        let list_end = loop {
+            match top_level_word(tokens, from, end, &LIST_ENDS) {
+                Some(at)
+                    if is(tokens, at, "from") && is(tokens, at.wrapping_sub(1), "distinct") =>
+                {
+                    from = at + 1;
+                }
+                found => break found.unwrap_or(end),
+            }
+        };
+        (list, list_end)
     } else if ["insert", "update", "delete"]
         .iter()
         .any(|w| is(tokens, start, w))

@@ -1,0 +1,10 @@
+# The tables each statement family's migrations leave, with their columns:
+# one table per line, as the family, the table, then its columns in sorted
+# order. The statement guard checks field references against this list, and
+# tests/migrate.rs compares it with each freshly migrated history, so a new
+# migration updates it in the same change.
+attempts runlimit_attempts capacity_shard capacity_slot config_fingerprint failures last_failure_ms lease_token lease_until_ms quiet_ms retry_at_ms subject_key
+fixed_window runlimit_capacity_shards capacity_shard row_count
+fixed_window runlimit_fixed_windows capacity_shard config_fingerprint policy_id scope_id subject_key used window_expires_at window_started_at
+gcra runlimit_gcra capacity_shard config_fingerprint expires_at_ms subject_key tat_scaled
+gcra runlimit_gcra_shards capacity_shard observed_at_ms row_count
