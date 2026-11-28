@@ -257,6 +257,20 @@ class SqlGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inherits'):
             validate_sql_gate(self.tree(inherited))
 
+    def test_only_lf_and_crlf_end_a_manifest_line(self):
+        described = self.MANIFEST.decode().replace(
+            'name = "runlimit-postgres"\n',
+            'name = "runlimit-postgres"\ndescription = "a b"\n')
+        self.assertEqual(manifest_lints(described), manifest_lints(self.MANIFEST.decode()))
+        hidden = self.MANIFEST.replace(
+            b'unsafe_code = "forbid"\n',
+            b'unsafe_code = "forbid"\n# note\xe2\x80\xa8[package]\n'
+            b'unfulfilled_lint_expectations = "allow"\n')
+        with self.assertRaisesRegex(ValueError, 'lowers'):
+            validate_sql_gate(self.tree(hidden))
+        crlf = self.MANIFEST.decode().replace('\n', '\r\n')
+        self.assertEqual(manifest_lints(crlf), manifest_lints(self.MANIFEST.decode()))
+
     def test_an_escape_after_the_first_key_component_reads(self):
         target = self.MANIFEST + (b'\n[target."cfg(target_os = \\"linux\\")".dependencies]\n'
                                   b'libc = "0.2"\n')

@@ -135,6 +135,12 @@ def validate_provenance(root, expected, required=None):
             raise ValueError('provenance holds an uninventoried file: ' + name)
 
 
+def toml_lines(text):
+    """The lines of a TOML document: TOML ends a line only at LF or CRLF, so
+    U+2028 and the other separators `str.splitlines` honours stay in it."""
+    return [line[:-1] if line.endswith('\r') else line for line in text.split('\n')]
+
+
 def first_key(dotted):
     """The first component of a dotted TOML key, unquoted, or None for an escaped one.
 
@@ -164,7 +170,7 @@ def inline_level(fields):
 
 def listed_paths(config, key):
     """The paths of one clippy.toml list's active `{ path = ..., reason = ... },` lines."""
-    lines = iter(config.splitlines())
+    lines = iter(toml_lines(config))
     if f'{key} = [' not in lines:
         raise ValueError(f'clippy.toml has no {key} list')
     paths = []
@@ -256,7 +262,7 @@ def top_level_lines(text):
     open at the end of its line is no TOML this reader trusts, so it raises.
     """
     quote, depth = None, 0
-    for number, raw in enumerate(text.splitlines(), 1):
+    for number, raw in enumerate(toml_lines(text), 1):
         if quote is None and depth == 0:
             yield number, raw
             if raw.strip().startswith('['):
@@ -365,9 +371,9 @@ def validate_sql_gate(root):
         raise ValueError(f'runlimit-postgres lowers its SQL gate lints: {sorted(lowered)}')
     # The shared file holds scalar `key = value` settings; each must appear as
     # the same top-level line in the crate's file.
-    local = {line.strip() for line in (package / 'clippy.toml').read_text().splitlines()}
+    local = {line.strip() for line in toml_lines((package / 'clippy.toml').read_text())}
     dropped = sorted(line.strip() for line in
-                     (Path(root) / 'runlimit' / 'clippy.toml').read_text().splitlines()
+                     toml_lines((Path(root) / 'runlimit' / 'clippy.toml').read_text())
                      if line.strip() and not line.strip().startswith('#')
                      and line.strip() not in local)
     if dropped:

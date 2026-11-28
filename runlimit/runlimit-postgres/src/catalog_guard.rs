@@ -559,7 +559,13 @@ fn the_detector_reads_each_token_as_postgresql_does() {
     assert_eq!(unqualified(joined), Vec::<String>::new());
     let tables = inventory(&[("t", &["id"])]);
     assert_eq!(fields::unresolved(joined, &tables), Vec::<String>::new());
-    assert_eq!(unqualified("SELECT join(1)"), ["join(...)"]);
+    for call in [
+        "SELECT join(1)",
+        "SELECT join(values) FROM t",
+        "SELECT join(VALUES (1))",
+    ] {
+        assert_eq!(unqualified(call), ["join(...)"], "{call}");
+    }
     // Non-ASCII code is reported, not sliced.
     assert_eq!(
         unqualified("SELECT 名 AS label"),

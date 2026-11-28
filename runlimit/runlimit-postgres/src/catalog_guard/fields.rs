@@ -273,9 +273,10 @@ struct Declarations<'t> {
     /// appear in: their own names may qualify a field there and in nested
     /// blocks. An alias hides the name it stands for.
     visible: BTreeMap<String, BTreeSet<usize>>,
-    /// The token of each FROM alias with a column list, which the detector
-    /// may read as no call.
+    /// The token of each FROM alias with a column list, and of each JOIN
+    /// the walk read, which the detector may read as no call.
     listed_aliases: BTreeSet<usize>,
+    joins: BTreeSet<usize>,
     problems: Vec<String>,
 }
 
@@ -365,6 +366,7 @@ fn declarations<'t>(
         scopes: BTreeMap::new(),
         visible: BTreeMap::new(),
         listed_aliases: BTreeSet::new(),
+        joins: BTreeSet::new(),
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -433,7 +435,12 @@ fn declarations<'t>(
             // UPDATE and DELETE FROM name a write target, not a FROM source.
             record_from_item(&mut declarations, tokens, &item, !lists);
             match next_from_item(tokens, item.end) {
-                Some(next) if lists => item_start = next,
+                Some(next) if lists => {
+                    if is(tokens, next - 1, "join") {
+                        declarations.joins.insert(next - 1);
+                    }
+                    item_start = next;
+                }
                 _ => break,
             }
         }
@@ -620,18 +627,26 @@ fn enclosing_end(tokens: &[Token], index: usize) -> usize {
     tokens.len()
 }
 
-/// Where each FROM alias with a column list starts in the stripped text of
-/// `sql`, bare (`f(1) s(value)`) or after AS, as the FROM parser reads it:
-/// the one place a word followed by `(` names columns rather than a call.
-pub(super) fn listed_alias_offsets(sql: &str) -> BTreeSet<usize> {
+/// Where the FROM parser read a word followed by `(` as grammar, by byte
+/// offset in the stripped text of `sql`, which the detector reads too.
+pub(super) struct ParsedSyntax {
+    /// Each FROM alias with a column list, bare (`f(1) s(value)`) or after
+    /// AS: the one place such a word names columns rather than a call.
+    pub(super) listed_aliases: BTreeSet<usize>,
+    /// Each JOIN between FROM items, which PostgreSQL also accepts as a
+    /// function name elsewhere (`SELECT join(values)`).
+    pub(super) joins: BTreeSet<usize>,
+}
+
+pub(super) fn parsed_syntax(sql: &str) -> ParsedSyntax {
     let (tokens, offsets) = tokenize_at(sql);
     let tables = BTreeMap::new();
     let declarations = declarations(&tokens, &tables);
-    declarations
-        .listed_aliases
-        .iter()
-        .map(|&at| offsets[at])
-        .collect()
+    let at = |indices: &BTreeSet<usize>| indices.iter().map(|&index| offsets[index]).collect();
+    ParsedSyntax {
+        listed_aliases: at(&declarations.listed_aliases),
+        joins: at(&declarations.joins),
+    }
 }
 
 /// The qualified names in `sql` that are not columns of their receiver, and

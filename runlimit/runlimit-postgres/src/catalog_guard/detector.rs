@@ -21,7 +21,6 @@ const SYNTAX: &[&str] = &[
     "from",
     "greatest",
     "in",
-    "join",
     "lateral",
     "least",
     "materialized",
@@ -77,7 +76,7 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
         return found;
     }
     let ctes = cte_names(&code);
-    let listed = super::fields::listed_alias_offsets(sql);
+    let parsed = super::fields::parsed_syntax(sql);
     let bytes = code.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
@@ -108,7 +107,8 @@ pub(super) fn unqualified(sql: &str) -> Vec<String> {
                 Some("pg_catalog") => {}
                 Some(schema) => found.push(format!("{schema}.{word}(...)")),
                 None if is_syntax(&code, start, &word)
-                    || owns_column_list(&code, start, &ctes, &listed) => {}
+                    || owns_column_list(&code, start, &ctes, &parsed.listed_aliases)
+                    || parsed.joins.contains(&start) => {}
                 None => found.push(format!("{word}(...)")),
             }
         }
@@ -187,7 +187,6 @@ pub(super) fn catalog_calls(sql: &str) -> BTreeSet<String> {
 const CONTEXTUAL_SYNTAX: &[&str] = &[
     "conflict",
     "filter",
-    "join",
     "materialized",
     "over",
     "recursive",
@@ -219,8 +218,6 @@ fn is_syntax(code: &str, start: usize, word: &str) -> bool {
         // `ON CONFLICT (target) DO ...`; a conflict target's WHERE is outside
         // this dialect.
         "conflict" => before(0, "on") && after == "do",
-        // `... JOIN (query) AS alias`; a call's argument is never a bare query.
-        "join" => opens_query,
         // `aggregate(...) FILTER (WHERE ...)`.
         "filter" => before(0, ")") && inside == "where",
         // `function(...) OVER (window specification)`.
