@@ -27,7 +27,7 @@
 use crate::{
     CheckError, CheckPhase, PostgresConfig,
     base::{BundledHistory, PgLimiterBase},
-    protocol::{ATTEMPT_LOCK_NAMESPACE, capacity_shard},
+    protocol::{ATTEMPT_LOCK_NAMESPACE, capacity_shard, shard_admits_new_row},
     statements::{Bound, attempts as sql},
     transaction::{BoundedConnection, Check, CheckTransaction, ConnectionOutcome},
 };
@@ -379,7 +379,12 @@ async fn free_slot(
         .fetch_one(PHASE, sql::OCCUPANCY_SQL.query().bind(shard))
         .await?;
     let row_count: i64 = occupancy.try_get("row_count").map_err(decode)?;
-    if row_count >= i64::from(maximum) {
+    let row_count = u64::try_from(row_count).map_err(|_| {
+        ConnectionOutcome::Reusable(CheckError::storage_invariant(
+            "attempt shard occupancy is negative",
+        ))
+    })?;
+    if !shard_admits_new_row(row_count, 0, maximum) {
         return Ok(None);
     }
     let slot = tx

@@ -7,10 +7,7 @@ use std::{
 
 use runlimit_core::{CounterKey, Delay, Denial};
 
-use crate::{
-    MemoryStoreConfig,
-    store::{MemoryBatchError, MemoryStoreStats, PoisonedShardError},
-};
+use crate::{MemoryBatchError, MemoryStoreConfig, MemoryStoreStats, PoisonedShardError};
 
 mod session;
 
@@ -27,7 +24,7 @@ pub(crate) fn remaining_duration(millis: u128) -> Duration {
 }
 
 pub(crate) use session::{
-    BatchSessionError, CheckSessionError, EntryWrite, PendingToken, QuotaAlgorithm,
+    BatchAlgorithm, BatchSessionError, CheckSessionError, EntryWrite, PendingToken, QuotaAlgorithm,
     QuotaEvaluation, execute_batch, execute_check,
 };
 

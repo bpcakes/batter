@@ -109,6 +109,33 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- `MemoryStore` and `GcraStore` are now thin wrappers over one private
+  shell. It owns their clock, shards and observer, their builders, `Debug`
+  output, statistics, clearing and poison recovery, and the mapping from each
+  algorithm's session failures to its public errors. `MemoryBatchError`,
+  `PoisonedShardError` and `MemoryStoreStats` move out of the fixed-window
+  module into modules of their own; their crate-root paths are unchanged.
+  `GcraStore` now documents the observer, poisoning and recovery guarantees
+  that `MemoryStore` documents and that already held for both. In
+  `runlimit-postgres`, both quota limiters time and report checks, batches
+  and cleanup through one set of wrappers in the shared limiter shell, which
+  also validates a batch before a connection is acquired, returns a zero-row
+  cleanup without database work and acquires the one maintenance connection.
+  The fixed-window, GCRA and attempt admissions decide whether a capacity
+  shard has room for a new row with one predicate. No public item, signature,
+  SQL statement, lock order or persisted format changes, and the memory check
+  and batch allocation counts measured before and after are equal
+  (`batter-39wm.7`). Three differences follow:
+  - `GcraStore`'s `Debug` output prints `shard_state: [REDACTED]` without
+    quotes, as `MemoryStore`'s does. It printed `shard_state: "[REDACTED]"`;
+    a log matcher on the quoted text must match the unquoted form. This is an
+    observable formatting change, not a hard cut.
+  - The fixed-window capacity preflight no longer has a "capacity shard
+    ledger count overflowed" invariant: a ledger count that decodes as a
+    `BIGINT` cannot overflow when the batch's pending rows are added.
+  - An attempt admission that reads a negative shard row count, which
+    `COUNT(*)` cannot return, fails as a storage invariant ("attempt shard
+    occupancy is negative") instead of treating the shard as having room.
 - **Breaking (`runlimit-http`):** the version-neutral items move from
   `runlimit_http::draft_11` to the crate root, which `draft_12` and `draft_11`
   share: `HeaderField`, `EncodingError`, `MAX_POLICY_NAME_LENGTH` and

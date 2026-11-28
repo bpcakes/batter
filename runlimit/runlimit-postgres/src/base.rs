@@ -1,11 +1,18 @@
 //! The pool, runtime bounds and observer every `PostgreSQL` limiter owns, and
-//! the one way each of them migrates, reaches a connection and reports.
+//! the one way each of them migrates, reaches a connection and reports. Both
+//! quota limiters also time, validate, clean up and observe through the
+//! wrappers here rather than through copies of their own.
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use runlimit_core::{
     AdmissionObservation, BatchDecision, Check, CleanupObservation, CleanupOutcome, Decision,
-    Observation, Observer, RateLimitPolicy, observe_safely,
+    Observation, Observer, RateLimitPolicy, observe_safely, validate_batch,
 };
 use sqlx::{
     PgPool,
@@ -14,7 +21,9 @@ use sqlx::{
 
 use crate::{
     BatchCheckError, CheckError, MaintenanceError, PostgresConfig,
-    transaction::{self, BoundedConnection, ConnectionCancellationGuard, ConnectionOutcome},
+    transaction::{
+        self, BoundedConnection, ConnectionCancellationGuard, ConnectionOutcome, Maintenance,
+    },
 };
 
 /// The state shared by every limiter, generic over its observer trait object.
@@ -112,10 +121,23 @@ impl<O: ?Sized> PgLimiterBase<O> {
         BoundedConnection::acquire(&self.pool, self.config).await
     }
 
-    pub(crate) async fn maintenance_connection(
+    /// Runs one bounded cleanup `transaction` that removes at most
+    /// `maximum_rows` rows. A zero limit performs no database work.
+    async fn cleanup(
         &self,
-    ) -> Result<BoundedConnection<transaction::Maintenance>, MaintenanceError> {
-        BoundedConnection::acquire(&self.pool, self.config).await
+        maximum_rows: u32,
+        transaction: impl AsyncFnOnce(
+            &mut BoundedConnection<Maintenance>,
+            u32,
+        ) -> Result<u64, ConnectionOutcome<MaintenanceError>>,
+    ) -> Result<u64, MaintenanceError> {
+        if maximum_rows == 0 {
+            return Ok(0);
+        }
+        let mut connection =
+            BoundedConnection::<Maintenance>::acquire(&self.pool, self.config).await?;
+        let result = transaction(&mut connection, maximum_rows).await;
+        connection.finish(result.map(ConnectionOutcome::Reusable))
     }
 }
 
@@ -130,7 +152,66 @@ pub(crate) enum BundledHistory {
 
 /// Quota limiters report through the backend-neutral [`Observer`]. Callbacks
 /// run only after the operation has released its connection.
+///
+/// The `observed_*` wrappers are the one timing and reporting path of both
+/// quota limiters: each measures wall-clock time around the whole operation,
+/// connection acquisition included, and reports its result once. Each takes
+/// the operation as a function and builds its future inside, so a caller's
+/// future holds the admission state machine once rather than also keeping
+/// the moved-in argument.
 impl PgLimiterBase<dyn Observer> {
+    /// Runs one check's `admission` and reports it.
+    pub(crate) async fn observed_check<P: RateLimitPolicy + ?Sized, F>(
+        &self,
+        check: &Check<'_, P>,
+        admission: impl FnOnce() -> F,
+    ) -> Result<Decision, CheckError>
+    where
+        F: Future<Output = Result<Decision, CheckError>>,
+    {
+        let started = Instant::now();
+        let result = admission().await;
+        self.observe_check(check, &result, started.elapsed());
+        result
+    }
+
+    /// Validates `checks`, builds and runs the batch's `admission` only when
+    /// they form a valid batch, and reports the batch either way. A rejected
+    /// batch never calls `admission`, so it never acquires a connection.
+    pub(crate) async fn observed_batch<P: RateLimitPolicy, F>(
+        &self,
+        checks: &[Check<'_, P>],
+        admission: impl FnOnce() -> F,
+    ) -> Result<BatchDecision, BatchCheckError>
+    where
+        F: Future<Output = Result<BatchDecision, CheckError>>,
+    {
+        let started = Instant::now();
+        let result = match validate_batch(checks, self.config.max_batch_size()) {
+            Ok(()) => admission().await.map_err(BatchCheckError::from),
+            Err(error) => Err(error.into()),
+        };
+        self.observe_batch(checks, &result, started.elapsed());
+        result
+    }
+
+    /// Runs one bounded cleanup `transaction` that removes at most
+    /// `maximum_rows` rows, and reports it. A zero limit performs no database
+    /// work and is reported as confirmed with nothing removed.
+    pub(crate) async fn observed_cleanup(
+        &self,
+        maximum_rows: u32,
+        transaction: impl AsyncFnOnce(
+            &mut BoundedConnection<Maintenance>,
+            u32,
+        ) -> Result<u64, ConnectionOutcome<MaintenanceError>>,
+    ) -> Result<u64, MaintenanceError> {
+        let started = Instant::now();
+        let result = self.cleanup(maximum_rows, transaction).await;
+        self.observe_cleanup(maximum_rows, &result, started.elapsed());
+        result
+    }
+
     pub(crate) fn observe_check<P: RateLimitPolicy + ?Sized>(
         &self,
         check: &Check<'_, P>,
@@ -187,13 +268,112 @@ impl PgLimiterBase<dyn Observer> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
+    use runlimit_core::{BatchError, Observation, Observer};
     use sqlx::postgres::PgPoolOptions;
 
     use crate::{
-        PostgresConfig, PostgresGcraLimiter, PostgresLimiter, attempts::PostgresAttemptLimiter,
+        BatchCheckError, PostgresConfig, PostgresGcraLimiter, PostgresLimiter,
+        attempts::PostgresAttemptLimiter,
     };
+
+    #[derive(Default)]
+    struct RecordingObserver(Mutex<Vec<String>>);
+
+    impl Observer for RecordingObserver {
+        fn observe(&self, observation: &Observation<'_>) {
+            let entry = match observation {
+                Observation::Admission(admission) => {
+                    format!("{:?} {:?}", admission.outcome(), admission.consumption())
+                }
+                Observation::Cleanup(cleanup) => {
+                    format!("cleanup {} {:?}", cleanup.requested(), cleanup.outcome())
+                }
+                Observation::Capacity(_) => "capacity".to_owned(),
+            };
+            self.0.lock().unwrap().push(entry);
+        }
+    }
+
+    // The pool points at a closed port, so either path reaching for a
+    // connection would fail instead of returning these results.
+    #[tokio::test]
+    async fn both_quota_limiters_validate_skip_and_observe_through_one_path() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
+        let fixed_window_observer = Arc::new(RecordingObserver::default());
+        let gcra_observer = Arc::new(RecordingObserver::default());
+        let fixed_window =
+            PostgresLimiter::new(pool.clone()).with_observer(fixed_window_observer.clone());
+        let gcra = PostgresGcraLimiter::new(pool).with_observer(gcra_observer.clone());
+
+        assert!(matches!(
+            fixed_window.check_all(&[]).await,
+            Err(BatchCheckError::InvalidBatch(BatchError::EmptyBatch))
+        ));
+        assert!(matches!(
+            gcra.check_all(&[]).await,
+            Err(BatchCheckError::InvalidBatch(BatchError::EmptyBatch))
+        ));
+        assert_eq!(fixed_window.cleanup_expired(0).await.unwrap(), 0);
+        assert_eq!(gcra.cleanup_expired(0).await.unwrap(), 0);
+
+        let observed = fixed_window_observer.0.lock().unwrap().clone();
+        assert_eq!(
+            observed,
+            ["Failed NotConsumed", "cleanup 0 Confirmed { removed: 0 }"]
+        );
+        assert_eq!(*gcra_observer.0.lock().unwrap(), observed);
+    }
+
+    /// An admission whose future is large and holds its state across an
+    /// await.
+    async fn large_admission<T>(outcome: T) -> T {
+        let state = [7_u8; 4096];
+        tokio::task::yield_now().await;
+        std::hint::black_box(&state);
+        outcome
+    }
+
+    // Each wrapper builds the admission future inside itself, so its own
+    // future holds that state machine once instead of also keeping a moved-in
+    // copy, which once doubled every check future past Tokio's boxing size.
+    #[tokio::test]
+    async fn the_observed_wrappers_hold_the_admission_future_once() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgresql://runlimit:runlimit@127.0.0.1:1/runlimit")
+            .expect("syntactically valid database URL");
+        let base = super::PgLimiterBase::<dyn Observer>::new(pool);
+        let hasher = runlimit_core::KeyHasher::new([1; 32]).expect("valid test secret");
+        let policy = runlimit_core::FixedWindowPolicy::new(
+            runlimit_core::PolicyId::new("size").expect("valid policy id"),
+            runlimit_core::ScopeId::new("subject").expect("valid scope id"),
+            1,
+            Duration::from_secs(1),
+        )
+        .expect("valid policy");
+        let check = runlimit_core::Check::new(hasher.hash_for(&policy, "subject"));
+        let checks = [runlimit_core::Check::new(
+            hasher.hash_for(&policy, "subject"),
+        )];
+        let error = || crate::CheckError::storage_invariant("never run");
+        let inner = std::mem::size_of_val(&large_admission(Err::<(), _>(error())));
+        let check_size =
+            std::mem::size_of_val(&base.observed_check(&check, || large_admission(Err(error()))));
+        let batch_size =
+            std::mem::size_of_val(&base.observed_batch(&checks, || large_admission(Err(error()))));
+        for (name, size) in [("check", check_size), ("batch", batch_size)] {
+            assert!(
+                size < inner + 1024,
+                "observed_{name} future is {size} bytes around a {inner}-byte admission"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn every_limiter_exposes_the_same_shell() {

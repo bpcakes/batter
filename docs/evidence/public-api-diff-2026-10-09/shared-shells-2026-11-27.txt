@@ -1,0 +1,34 @@
+batter-39wm.7 public API surface check, 2026-11-27, regenerated 2026-11-28
+
+Reproducible pair: b3c064b8 (weed/runlimit-ratelimit-draft12-39wm.9, this
+PR's base) and 7800fc8b (the commit before this record on
+weed/runlimit-shared-shells-39wm.7).
+Measured pair: e0057ddc and 6f789687, the same two revisions before a
+restack. `git diff` shows runlimit/runlimit-memory and
+runlimit/runlimit-postgres identical between e0057ddc and b3c064b8 and
+between 6f789687 and 7800fc8b, so the result below applies to the
+reproducible pair. A later restack keeps it valid while those trees match.
+Toolchain: nightly-2026-10-01
+Method: existing surface.py over rustdoc JSON from
+`cargo +nightly-2026-10-01 rustdoc -p <package> --lib --all-features --locked --
+-Zunstable-options --output-format json` for runlimit-memory and
+runlimit-postgres, each revision in its own worktree with its own target
+directory. This is a structural inspection only; supported verification uses
+the unmodified pinned toolchain.
+Result: no public item is removed, added or renamed. The only changed entries
+are the three crate-root re-exports whose source module moved out of the
+fixed-window module; their public paths are unchanged. surface.py does not
+compare signatures: a line comparison of the public `fn`, `struct`, `enum`
+and `Limiter` impl declarations in the four changed public-shell files found
+no signature change. runlimit-postgres is unchanged.
+
+## runlimit-memory: 159 -> 159 entries; 3 removed, 3 added
+- REMOVED use runlimit_memory::MemoryBatchError <- store::MemoryBatchError
+- REMOVED use runlimit_memory::MemoryStoreStats <- store::MemoryStoreStats
+- REMOVED use runlimit_memory::PoisonedShardError <- store::PoisonedShardError
++ ADDED   use runlimit_memory::MemoryBatchError <- errors::MemoryBatchError
++ ADDED   use runlimit_memory::MemoryStoreStats <- stats::MemoryStoreStats
++ ADDED   use runlimit_memory::PoisonedShardError <- errors::PoisonedShardError
+
+## runlimit-postgres: 183 -> 183 entries; 0 removed, 0 added
+

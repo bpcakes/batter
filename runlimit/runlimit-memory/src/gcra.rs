@@ -7,7 +7,8 @@ use thiserror::Error;
 
 use crate::{
     Clock, MemoryBatchError, MemoryStoreConfig, MemoryStoreStats, PoisonedShardError, SystemClock,
-    shards::{BatchSessionError, BoundedShards, CheckSessionError, execute_batch, execute_check},
+    shards::{BatchSessionError, CheckSessionError},
+    shell::{ShellBuilder, StoreAlgorithm, StoreShell},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,15 +113,38 @@ impl From<PoisonedShardError> for GcraBatchError {
     }
 }
 
+impl StoreAlgorithm for GcraAlgorithm {
+    type CheckError = GcraCheckError;
+    type CheckAllError = GcraBatchError;
+
+    fn check_error(error: CheckSessionError<ArithmeticOverflow>) -> GcraCheckError {
+        match error {
+            CheckSessionError::PoisonedShard(poisoned) => GcraCheckError::PoisonedShard(poisoned),
+            CheckSessionError::Evaluation(ArithmeticOverflow) => GcraCheckError::ArithmeticOverflow,
+        }
+    }
+
+    fn check_all_error(error: BatchSessionError<ArithmeticOverflow>) -> GcraBatchError {
+        match error {
+            BatchSessionError::Store(store) => GcraBatchError::Store(store),
+            BatchSessionError::Evaluation(ArithmeticOverflow) => GcraBatchError::ArithmeticOverflow,
+        }
+    }
+}
+
 /// A hard-bounded, process-local generic-cell-rate-algorithm store.
 ///
 /// Each key occupies one constant-size entry. The store refuses to evict
 /// active entries, performs bounded cleanup per check, and preserves atomic
 /// all-or-nothing batches in caller order.
+///
+/// If application code panics while a shard is locked, that shard remains
+/// poisoned and every later operation touching it fails closed with
+/// [`PoisonedShardError`]. [`GcraStore::recover_poisoned`] is an explicit
+/// availability tradeoff: it restores poisoned shards by discarding their
+/// counters rather than trusting state whose consistency is unknown.
 pub struct GcraStore<C = SystemClock> {
-    clock: C,
-    shards: BoundedShards<Entry>,
-    observer: Option<Arc<dyn Observer>>,
+    shell: StoreShell<GcraAlgorithm, C>,
 }
 
 /// Builds an empty [`GcraStore`] with its clock chosen before any quota state
@@ -145,20 +169,12 @@ pub struct GcraStore<C = SystemClock> {
 /// ```
 #[must_use]
 pub struct GcraStoreBuilder<C = SystemClock> {
-    config: MemoryStoreConfig,
-    clock: C,
+    shell: ShellBuilder<C>,
 }
 
 impl<C> fmt::Debug for GcraStore<C> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let poisoned_shards = self.shards.poisoned_count();
-        formatter
-            .debug_struct("GcraStore")
-            .field("config", self.shards.config())
-            .field("has_observer", &self.observer.is_some())
-            .field("poisoned_shards", &poisoned_shards)
-            .field("shard_state", &"[REDACTED]")
-            .finish_non_exhaustive()
+        self.shell.fmt_debug("GcraStore", formatter)
     }
 }
 
@@ -176,8 +192,7 @@ impl GcraStore<SystemClock> {
     /// clock's coordinate system.
     pub fn builder(config: MemoryStoreConfig) -> GcraStoreBuilder<SystemClock> {
         GcraStoreBuilder {
-            config,
-            clock: SystemClock::new(),
+            shell: ShellBuilder::new(config),
         }
     }
 }
@@ -186,8 +201,7 @@ impl<C> GcraStoreBuilder<C> {
     /// Returns this builder with a caller-supplied monotonic clock.
     pub fn with_clock<D: Clock>(self, clock: D) -> GcraStoreBuilder<D> {
         GcraStoreBuilder {
-            config: self.config,
-            clock,
+            shell: self.shell.with_clock(clock),
         }
     }
 }
@@ -196,18 +210,19 @@ impl<C: Clock> GcraStoreBuilder<C> {
     /// Builds an empty store whose timestamps use the selected clock.
     pub fn build(self) -> GcraStore<C> {
         GcraStore {
-            clock: self.clock,
-            shards: BoundedShards::new(self.config),
-            observer: None,
+            shell: self.shell.build(),
         }
     }
 }
 
 impl<C> GcraStore<C> {
     /// Returns this store with an operational observer.
+    ///
+    /// Observer callbacks run after internal locks are released. A callback
+    /// panic is isolated and cannot change the admission result.
     #[must_use]
     pub fn with_observer(mut self, observer: Arc<dyn Observer>) -> Self {
-        self.observer = Some(observer);
+        self.shell.set_observer(observer);
         self
     }
 }
@@ -220,16 +235,7 @@ impl<C: Clock> GcraStore<C> {
     /// Fails closed when the target shard is poisoned or exact arithmetic
     /// cannot represent the caller-supplied clock value.
     pub fn check(&self, check: &Check<'_, GcraPolicy>) -> Result<Decision, GcraCheckError> {
-        execute_check::<GcraAlgorithm, _>(
-            &self.shards,
-            &self.clock,
-            self.observer.as_deref(),
-            check,
-        )
-        .map_err(|error| match error {
-            CheckSessionError::PoisonedShard(poisoned) => GcraCheckError::PoisonedShard(poisoned),
-            CheckSessionError::Evaluation(ArithmeticOverflow) => GcraCheckError::ArithmeticOverflow,
-        })
+        self.shell.check(check)
     }
 
     /// Evaluates a nonempty atomic batch of GCRA checks.
@@ -245,39 +251,42 @@ impl<C: Clock> GcraStore<C> {
         &self,
         checks: &[Check<'_, GcraPolicy>],
     ) -> Result<BatchDecision, GcraBatchError> {
-        execute_batch::<GcraAlgorithm, _>(
-            &self.shards,
-            &self.clock,
-            self.observer.as_deref(),
-            checks,
-        )
-        .map_err(|error| match error {
-            BatchSessionError::Store(store) => GcraBatchError::Store(store),
-            BatchSessionError::Evaluation(ArithmeticOverflow) => GcraBatchError::ArithmeticOverflow,
-        })
+        self.shell.check_all(checks)
     }
 
-    /// Returns current bounded storage use.
+    /// Returns current storage usage.
     ///
     /// # Errors
     ///
-    /// Returns an error if any shard is poisoned.
+    /// Returns an error if a shard is poisoned.
     pub fn stats(&self) -> Result<MemoryStoreStats, PoisonedShardError> {
-        self.shards.stats()
+        self.shell.stats()
     }
 
     /// Removes every stored counter.
     ///
     /// # Errors
     ///
-    /// Returns an error if any shard is poisoned.
+    /// Returns an error if a shard is poisoned.
     pub fn clear(&self) -> Result<(), PoisonedShardError> {
-        self.shards.clear()
+        self.shell.clear()
     }
 
-    /// Rebuilds poisoned shards by discarding their untrusted counter state.
+    /// Rebuilds every poisoned shard and returns the number recovered.
+    ///
+    /// A poisoned shard's internal consistency is unknown, so recovery
+    /// discards all counters in that shard before clearing its mutex poison
+    /// flag. This can admit requests that the discarded counters would have
+    /// denied. Healthy shards and their active counters are left unchanged.
+    ///
+    /// Until this method is called, operations touching a poisoned shard
+    /// continue to fail closed with [`PoisonedShardError`].
+    /// Recovery is safe to invoke through an [`std::sync::Arc`]. It locks every
+    /// shard in index order before changing any of them, so concurrent checks
+    /// observe either the pre-recovery poisoned store or the complete recovered
+    /// state, never a partially reopened multi-shard store.
     pub fn recover_poisoned(&self) -> usize {
-        self.shards.recover_poisoned()
+        self.shell.recover_poisoned()
     }
 }
 
@@ -1001,7 +1010,7 @@ mod tests {
                 .map(subject)
                 .find(|subject| {
                     let check = Check::new((*subject).bind(&policy));
-                    store.shards.shard_index(&check.counter_key()) == target
+                    store.shell.shards().shard_index(&check.counter_key()) == target
                 })
                 .expect("the deterministic subject space reaches each configured shard")
         };
@@ -1165,7 +1174,7 @@ mod tests {
         let policy = policy("api.poisoned", 1, Duration::from_secs(1), 1);
         let check = Check::new(subject(1).bind(&policy));
         let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = store.shards.shard(0).lock().unwrap();
+            let _guard = store.shell.shards().shard(0).lock().unwrap();
             panic!("poison the only shard");
         }));
         assert!(panic_result.is_err());

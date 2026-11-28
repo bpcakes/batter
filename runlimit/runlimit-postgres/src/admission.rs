@@ -16,7 +16,7 @@ use crate::{
         Pending, PendingAllowance, PendingDenial, PendingQuotaDenial, SampledAllowance,
         authoritative_elapsed,
     },
-    protocol::{CAPACITY_SHARD_COUNT, advisory_lock_id, capacity_shard},
+    protocol::{CAPACITY_SHARD_COUNT, advisory_lock_id, capacity_shard, shard_admits_new_row},
     statements::fixed_window as sql,
     transaction::{self, BoundedConnection, CheckTransaction, ConnectionOutcome},
 };
@@ -329,14 +329,7 @@ async fn first_capacity_denial(
         let stored_rows = u64::try_from(stored_rows)
             .map_err(|_| CheckError::storage_invariant("capacity shard ledger count is negative"))
             .map_err(reusable_check_error)?;
-        let projected_rows = stored_rows
-            .checked_add(u64::from(*pending))
-            .and_then(|rows| rows.checked_add(1))
-            .ok_or(CheckError::storage_invariant(
-                "capacity shard ledger count overflowed",
-            ))
-            .map_err(reusable_check_error)?;
-        if projected_rows > u64::from(maximum_rows_per_shard) {
+        if !shard_admits_new_row(stored_rows, *pending, maximum_rows_per_shard) {
             return Ok(Some((input_index, PendingDenial::StorageCapacity)));
         }
         *pending += 1;
