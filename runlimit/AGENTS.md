@@ -196,7 +196,9 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   `src/pending.rs` is the only place a delay loses authoritative elapsed
   time. Do not add a second connection, timeout, migration or elapsed-time
   path beside these. Live suites share `tests/support`'s `IsolatedSchema` and
-  shard-key helpers.
+  shard-key helpers. The one live unit test, `src/catalog_guard/live.rs`,
+  needs the private statement inventory and cannot reach that module, so it
+  provisions and verifies its schemas the same way (`[schema, pg_catalog]`).
 - Every operational PostgreSQL statement is a `Statement` in
   `runlimit-postgres/src/statements/`. `Statement` is a closed enum generated
   from each family's `statements!` block, whose text is a string literal or

@@ -204,6 +204,17 @@ fn exceptions() -> Vec<(&'static str, String)> {
             .to_owned(),
         ),
         (
+            "catalog_guard/live.rs",
+            "#[expect(clippy::disallowed_methods, reason = \"the live check verifies its search path\")]
+             async fn current_schemas(pool: &PgPool) -> Vec<String> {
+                 sqlx::query_scalar(\"SELECT pg_catalog.current_schemas(false)\")
+                     .fetch_one(pool)
+                     .await
+                     .expect(\"read the check's search path\")
+             }"
+            .to_owned(),
+        ),
+        (
             "statements.rs",
             "#[expect(clippy::disallowed_methods, reason = \"the one place SQL text reaches sqlx\")]
              pub(crate) fn query<'q>(self) -> Query<'q, Postgres, PgArguments> {

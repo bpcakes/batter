@@ -210,9 +210,10 @@ def validate_macro_probes(root):
     attribute cannot expect it; the probes compile only under
     `--cfg runlimit_macro_probes`, which this check passes to Clippy. They
     expand from the committed `.sqlx` metadata, so SQLx runs offline whatever
-    the caller's environment says. The gate lints and `warnings` are pinned to
-    warn after every other flag, so the expected reports never fail the build:
-    the run must both succeed and report each macro at its probe.
+    the caller's environment says. Every lint is capped at warn, a forbidden
+    one included, which no later `-W` could lower, and the gate lints and
+    `warnings` are raised to warn, so the expected reports never fail the
+    build: the run must both succeed and report each macro at its probe.
     """
     package = (Path(root) / 'runlimit' / 'runlimit-postgres').resolve()
     expected = set(listed_paths((package / 'clippy.toml').read_text(), 'disallowed-macros'))
@@ -226,7 +227,8 @@ def validate_macro_probes(root):
     environment = {**os.environ, 'SQLX_OFFLINE': 'true', 'SQLX_OFFLINE_DIR': str(cache)}
     result = subprocess.run(
         ['cargo', 'clippy', '-p', 'runlimit-postgres', '--lib', '--tests', '--locked',
-         '--message-format=json', '--', '--cfg', 'runlimit_macro_probes', '-W', 'warnings',
+         '--message-format=json', '--', '--cfg', 'runlimit_macro_probes',
+         '--cap-lints', 'warn', '-W', 'warnings',
          *(flag for code in sorted(GATE_CODES) for flag in ('-W', code))],
         cwd=root, env=environment, capture_output=True, text=True)
     reports, errors = macro_reports(result.stdout)

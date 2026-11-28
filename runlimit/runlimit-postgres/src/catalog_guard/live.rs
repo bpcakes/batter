@@ -11,6 +11,7 @@
 //! INSERT target outside its source query) is decided here instead.
 
 use std::{
+    collections::BTreeSet,
     str::FromStr as _,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -27,24 +28,27 @@ use crate::{
     statements::{self, Statement},
 };
 
-#[derive(Clone, Copy, Debug)]
-enum Family {
+/// A migration history, which installs alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum History {
     FixedWindow,
     Gcra,
     Attempts,
 }
 
-impl Family {
-    /// Whether `statement` runs in this family's transactions: its own, and
-    /// the session statements every family shares.
-    const fn holds(self, statement: Statement) -> bool {
-        matches!(
-            (self, statement),
-            (_, Statement::Session(_))
-                | (Self::FixedWindow, Statement::FixedWindow(_))
-                | (Self::Gcra, Statement::Gcra(_))
-                | (Self::Attempts, Statement::Attempts(_))
-        )
+impl History {
+    const ALL: [Self; 3] = [Self::FixedWindow, Self::Gcra, Self::Attempts];
+
+    /// The histories whose schema `statement` runs against: its family's,
+    /// or every one for the session statements all transactions share. The
+    /// match is exhaustive, so a new family names its history here.
+    const fn of(statement: Statement) -> &'static [Self] {
+        match statement {
+            Statement::FixedWindow(_) => &[Self::FixedWindow],
+            Statement::Gcra(_) => &[Self::Gcra],
+            Statement::Attempts(_) => &[Self::Attempts],
+            Statement::Session(_) => &Self::ALL,
+        }
     }
 
     async fn migrate(self, pool: &PgPool) -> Result<(), MigrateError> {
@@ -56,6 +60,9 @@ impl Family {
     }
 }
 
+// The live suites' `tests/support` fixture is an integration-test module,
+// out of a unit test's reach, so this check provisions its schema the same
+// way: an empty schema, searched before `pg_catalog`, verified on connect.
 #[tokio::test]
 #[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
 async fn postgres_resolves_every_statement_in_its_familys_schema() {
@@ -68,28 +75,39 @@ async fn postgres_resolves_every_statement_in_its_familys_schema() {
         .duration_since(UNIX_EPOCH)
         .expect("the clock is after the epoch")
         .as_nanos();
+    let inventory = statements::all();
+    let mut prepared = BTreeSet::new();
     let mut unresolved = Vec::new();
-    for family in [Family::FixedWindow, Family::Gcra, Family::Attempts] {
-        let schema = format!("runlimit_guard_{family:?}_{}_{started}", std::process::id())
-            .to_ascii_lowercase();
+    for history in History::ALL {
+        let schema = format!(
+            "runlimit_guard_{history:?}_{}_{started}",
+            std::process::id()
+        )
+        .to_ascii_lowercase();
         administer(&admin, format!("CREATE SCHEMA {schema}")).await;
+        let search_path = format!("{schema}, pg_catalog");
         let options = PgConnectOptions::from_str(&url)
             .expect("the test database URL parses")
-            .options([("search_path", schema.as_str())]);
+            .options([("search_path", search_path.as_str())]);
         let pool = PgPoolOptions::new()
             .max_connections(1)
             .connect_with(options)
             .await
             .expect("connect inside the empty schema");
-        family
+        assert_eq!(
+            current_schemas(&pool).await,
+            [schema.as_str(), "pg_catalog"]
+        );
+        history
             .migrate(&pool)
             .await
-            .unwrap_or_else(|error| panic!("{family:?} installs its schema: {error}"));
-        for (name, statement) in statements::all() {
-            if family.holds(statement)
-                && let Err(error) = prepare(&pool, statement).await
-            {
-                unresolved.push(format!("{family:?} {name}: {error}"));
+            .unwrap_or_else(|error| panic!("{history:?} installs its schema: {error}"));
+        for (name, statement) in &inventory {
+            if History::of(*statement).contains(&history) {
+                if let Err(error) = prepare(&pool, *statement).await {
+                    unresolved.push(format!("{history:?} {name}: {error}"));
+                }
+                prepared.insert(name.clone());
             }
         }
         pool.close().await;
@@ -100,6 +118,8 @@ async fn postgres_resolves_every_statement_in_its_familys_schema() {
         unresolved.is_empty(),
         "statements PostgreSQL cannot resolve:\n{unresolved:#?}"
     );
+    let all: BTreeSet<String> = inventory.into_iter().map(|(name, _)| name).collect();
+    assert_eq!(prepared, all, "every statement is prepared in some schema");
 }
 
 /// Asks PostgreSQL to prepare `statement`, resolving every name in it.
@@ -115,7 +135,7 @@ async fn prepare(pool: &PgPool, statement: Statement) -> Result<(), sqlx::Error>
         .map(drop)
 }
 
-/// Creates or drops the schema one family migrates into.
+/// Creates or drops the schema one history migrates into.
 #[expect(
     clippy::disallowed_methods,
     reason = "the live check administers its own schema"
@@ -125,4 +145,16 @@ async fn administer(admin: &PgPool, sql: String) {
         .execute(admin)
         .await
         .expect("administer the check's schema");
+}
+
+/// The schemas `pool`'s connections search, as the shared fixture checks.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the live check verifies its search path"
+)]
+async fn current_schemas(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT pg_catalog.current_schemas(false)")
+        .fetch_one(pool)
+        .await
+        .expect("read the check's search path")
 }
