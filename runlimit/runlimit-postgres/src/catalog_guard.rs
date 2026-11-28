@@ -236,6 +236,9 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT pg_catalog.row_to_json FROM t * AS pg_catalog",
         // PostgreSQL 18 reads old and new in RETURNING as the target's rows.
         "WITH old AS (SELECT 1 AS gone) UPDATE t SET used = 1 RETURNING old.gone",
+        "UPDATE t SET used = 1 RETURNING WITH (NEW AS pg_catalog) pg_catalog.row_to_json",
+        // A nested WITH's CTE is visible only inside its query.
+        "SELECT a.extra FROM u AS a WHERE EXISTS (WITH u AS (SELECT 1 AS extra) SELECT 1 FROM u)",
         // A schema-qualified source is no CTE of the same name.
         "WITH pg_class AS (SELECT 1 AS extra) SELECT c.extra FROM pg_catalog.pg_class AS c",
         // A row alias is no relation an inner FROM can read.

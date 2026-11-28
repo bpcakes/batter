@@ -668,6 +668,19 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let declarations = declarations(&tokens, tables);
     let mut found = declarations.problems.clone();
     for index in 0..tokens.len() {
+        // A CTE is visible only in its own query, so a WITH that is not the
+        // statement's own could shadow a relation elsewhere; RETURNING WITH
+        // names OLD and NEW rows this scan does not read.
+        if is(&tokens, index, "with")
+            && index > 0
+            && !is(&tokens, index + 1, "ordinality")
+            && !is(&tokens, index + 1, "time")
+        {
+            found.push("a WITH clause that is not the statement's own".to_owned());
+        }
+        if is(&tokens, index, "returning") && is(&tokens, index + 1, "with") {
+            found.push("a RETURNING WITH clause".to_owned());
+        }
         // `JOIN ... USING (columns) AS alias` names a join row the
         // declaration scan does not read.
         if is(&tokens, index, "using")

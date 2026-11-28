@@ -26,14 +26,109 @@ const CONSTRAINT_WORDS: &[&str] = &[
 pub(in crate::catalog_guard) fn tables<'a>(
     migrations: impl IntoIterator<Item = &'a str>,
 ) -> BTreeMap<String, BTreeSet<String>> {
+    let statements: Vec<Vec<Token>> = migrations
+        .into_iter()
+        .flat_map(|migration| {
+            tokenize(&opaque_bodies(migration))
+                .split(|token| *token == Token::Punct(';'))
+                .map(<[Token]>::to_vec)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let code = MigrationCode::of(&statements);
     let mut tables = BTreeMap::new();
-    for migration in migrations {
-        let tokens = tokenize(&opaque_bodies(migration));
-        for statement in tokens.split(|token| *token == Token::Punct(';')) {
-            apply(statement, &mut tables);
-        }
+    for statement in &statements {
+        code.check(statement);
+        apply(statement, &mut tables);
     }
     tables
+}
+
+/// The code the migrations define, whose bodies this reader does not read:
+/// their functions, and the tables their triggers fire on.
+struct MigrationCode {
+    functions: BTreeSet<String>,
+    triggered: BTreeSet<String>,
+}
+
+/// The statement kinds a migration may run; any other, such as `SELECT`,
+/// `DO` or `CALL`, could run code with schema effects this reader cannot see.
+const STATEMENT_KINDS: &[&str] = &[
+    "alter", "comment", "create", "delete", "drop", "grant", "insert", "lock", "revoke", "update",
+];
+
+impl MigrationCode {
+    fn of(statements: &[Vec<Token>]) -> Self {
+        let mut code = Self {
+            functions: BTreeSet::new(),
+            triggered: BTreeSet::new(),
+        };
+        for tokens in statements {
+            if let Some(function) = defined_function(tokens) {
+                code.functions.insert(function);
+            }
+            if is(tokens, 0, "create")
+                && is(tokens, 1, "trigger")
+                && let Some(on) = (2..tokens.len()).find(|&index| is(tokens, index, "on"))
+                && let Some(table) = word(tokens, on + 1)
+            {
+                code.triggered.insert(table.to_owned());
+            }
+        }
+        code
+    }
+
+    /// Fails on a statement that runs migration-defined code now: one of
+    /// another kind, a call of a defined function outside its definition
+    /// or trigger (in DML, an index, a default or a check), or DML on a
+    /// table a defined trigger fires on.
+    fn check(&self, tokens: &[Token]) {
+        let Some(kind) = word(tokens, 0) else {
+            return;
+        };
+        assert!(
+            STATEMENT_KINDS.contains(&kind),
+            "a {kind:?} migration statement, which could run code with unknown schema effects"
+        );
+        let defines = defined_function(tokens).is_some()
+            || is(tokens, 0, "create") && is(tokens, 1, "trigger");
+        if !defines {
+            let calls = (0..tokens.len()).find(|&index| {
+                word(tokens, index).is_some_and(|name| self.functions.contains(name))
+                    && punct(tokens, index + 1, '(')
+            });
+            assert!(
+                calls.is_none(),
+                "a migration statement that calls a function the migrations define"
+            );
+        }
+        let target = match kind {
+            "insert" if is(tokens, 1, "into") => word(tokens, 2),
+            "update" => word(tokens, skip_guards(tokens, 1)),
+            "delete" if is(tokens, 1, "from") => word(tokens, skip_guards(tokens, 2)),
+            _ => None,
+        };
+        assert!(
+            !target.is_some_and(|table| self.triggered.contains(table)),
+            "migration DML on a table whose trigger runs code this reader cannot see"
+        );
+    }
+}
+
+/// The function a `CREATE [OR REPLACE] FUNCTION` statement defines.
+fn defined_function(tokens: &[Token]) -> Option<String> {
+    let at = if is(tokens, 1, "or") && is(tokens, 2, "replace") {
+        3
+    } else {
+        1
+    };
+    (is(tokens, 0, "create") && is(tokens, at, "function")).then_some(())?;
+    let name = if punct(tokens, at + 2, '.') {
+        at + 3
+    } else {
+        at + 1
+    };
+    word(tokens, name).map(str::to_owned)
 }
 
 /// `migration` with each dollar-quoted body blanked: a function body runs
@@ -277,6 +372,17 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE t (old BIGINT); ALTER TABLE t * DROP COLUMN old;",
         "ALTER TABLE missing ADD COLUMN extra BIGINT;",
         "CREATE TABLE t (id BIGINT); ALTER TABLE t SET SCHEMA archive;",
+        // A function body runs once something calls it now.
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION drop_old() RETURNS void AS $$ ALTER TABLE t DROP COLUMN old $$ LANGUAGE sql; \
+         SELECT drop_old();",
+        "CREATE TABLE t (old BIGINT); CREATE TABLE log (n BIGINT); \
+         CREATE FUNCTION f() RETURNS bigint AS $$ SELECT 1 $$ LANGUAGE sql; \
+         INSERT INTO log (n) VALUES (f());",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
+         INSERT INTO t (old) VALUES (1);",
         "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
         "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {
