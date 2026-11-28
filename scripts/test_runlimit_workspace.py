@@ -18,6 +18,10 @@ from check_runlimit_workspace import (
     package_archives,
     validate_provenance,
     validate_published,
+    validate_sql_gate,
+    listed_paths,
+    macro_reports,
+    manifest_lints,
 )
 from package import eligible
 
@@ -197,3 +201,142 @@ class AssetTests(unittest.TestCase):
                 with self.subTest(inside=inside), self.assertRaisesRegex(ValueError, 'inside the checkout'):
                     package_archives(root, inside)
 
+
+class SqlGateTests(unittest.TestCase):
+    MANIFEST = (b'[package]\nname = "runlimit-postgres"\n\n[lints.rust]\nunsafe_code = "forbid"\n\n'
+                b'[lints.clippy]\nall = { level = "warn", priority = -1 }\n'
+                b'pedantic = { level = "warn", priority = -1 }\n')
+    SHARED = b'cognitive-complexity-threshold = 20\n'
+    LOCAL = SHARED + b'disallowed-methods = [{ path = "sqlx::query" }]\n'
+
+    def tree(self, manifest=MANIFEST, local=LOCAL):
+        temporary = tempfile.TemporaryDirectory(prefix='runlimit-sql-gate-')
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        package = root / 'runlimit' / 'runlimit-postgres'
+        package.mkdir(parents=True)
+        (package / 'Cargo.toml').write_bytes(manifest)
+        (package / 'clippy.toml').write_bytes(local)
+        (root / 'runlimit' / 'clippy.toml').write_bytes(self.SHARED)
+        return root
+
+    def test_the_checkout_and_a_whole_fixture_pass(self):
+        validate_sql_gate(Path(__file__).resolve().parent.parent)
+        validate_sql_gate(self.tree())
+
+    def test_lowering_a_gate_lint_or_its_group_fails(self):
+        for setting in (b'style = "allow"', b'default = { level = "allow" }',
+                        b'disallowed_methods = "allow"', b'disallowed-methods = "allow"',
+                        b'disallowed_types = { priority = 1, level = "allow" }',
+                        b'disallowed-macros = { level = "allow", priority = 1 }'):
+            with self.subTest(setting=setting), self.assertRaisesRegex(ValueError, 'lowers'):
+                validate_sql_gate(self.tree(self.MANIFEST + setting + b'\n'))
+        lowered_all = self.MANIFEST.replace(b'all = { level = "warn", priority = -1 }',
+                                            b'all = { level = "allow", priority = -1 }')
+        with self.assertRaisesRegex(ValueError, 'clippy::all'):
+            validate_sql_gate(self.tree(lowered_all))
+
+    def test_lint_levels_set_in_another_form_fail_closed(self):
+        for manifest in (self.MANIFEST + b'\n[lints.clippy.style]\nlevel = "allow"\n',
+                         self.MANIFEST + b"\n['lints'.clippy.disallowed_methods]\nlevel = \"allow\"\n",
+                         self.MANIFEST + b'\n[ "lints" . clippy . style ]\nlevel = "allow"\n',
+                         self.MANIFEST + b'\n["\\u006cints".clippy.style]\nlevel = "allow"\n',
+                         b"'lints'.clippy.style = \"allow\"\n" + self.MANIFEST,
+                         b'lints.clippy.style = "allow"\n' + self.MANIFEST,
+                         self.MANIFEST + b'"style" = "allow"\n',
+                         self.MANIFEST + b'style = { level = "allow", note = 1 }\n'):
+            with self.subTest(manifest=manifest), self.assertRaises(ValueError):
+                validate_sql_gate(self.tree(manifest))
+
+    def test_allowing_warnings_or_inheriting_workspace_levels_fails(self):
+        for lint in (b'warnings', b'unfulfilled_lint_expectations', b'unfulfilled-lint-expectations'):
+            allowed = self.MANIFEST.replace(b'unsafe_code = "forbid"', lint + b' = "allow"')
+            with self.subTest(lint=lint), self.assertRaisesRegex(ValueError, 'lowers'):
+                validate_sql_gate(self.tree(allowed))
+        inherited = (b'[package]\nname = "runlimit-postgres"\n\n[lints]\nworkspace = true\n')
+        with self.assertRaisesRegex(ValueError, 'inherits'):
+            validate_sql_gate(self.tree(inherited))
+
+    def test_only_lf_and_crlf_end_a_manifest_line(self):
+        described = self.MANIFEST.decode().replace(
+            'name = "runlimit-postgres"\n',
+            'name = "runlimit-postgres"\ndescription = "a b"\n')
+        self.assertEqual(manifest_lints(described), manifest_lints(self.MANIFEST.decode()))
+        hidden = self.MANIFEST.replace(
+            b'unsafe_code = "forbid"\n',
+            b'unsafe_code = "forbid"\n# note\xe2\x80\xa8[package]\n'
+            b'unfulfilled_lint_expectations = "allow"\n')
+        with self.assertRaisesRegex(ValueError, 'lowers'):
+            validate_sql_gate(self.tree(hidden))
+        crlf = self.MANIFEST.decode().replace('\n', '\r\n')
+        self.assertEqual(manifest_lints(crlf), manifest_lints(self.MANIFEST.decode()))
+
+    def test_an_escape_after_the_first_key_component_reads(self):
+        target = self.MANIFEST + (b'\n[target."cfg(target_os = \\"linux\\")".dependencies]\n'
+                                  b'libc = "0.2"\n')
+        self.assertEqual(manifest_lints(target.decode()), manifest_lints(self.MANIFEST.decode()))
+        validate_sql_gate(self.tree(target))
+
+    def test_brackets_inside_values_open_no_table(self):
+        hidden = (b'package.description = """\n[example]\n"""\n'
+                  b'lints.rust.unfulfilled_lint_expectations = "allow"\n' + self.MANIFEST)
+        with self.assertRaisesRegex(ValueError, 'set lints in'):
+            validate_sql_gate(self.tree(hidden))
+        spanning = self.MANIFEST.replace(
+            b'name = "runlimit-postgres"\n',
+            b'name = "runlimit-postgres"\nmetadata = [\n["[lints.rust]"],\n]\n'
+            b"note = '''\n[lints.clippy]\n'''\nquoted = \"a \\\" [x] # y\"\n")
+        self.assertEqual(manifest_lints(spanning.decode()), manifest_lints(self.MANIFEST.decode()))
+        with self.assertRaisesRegex(ValueError, 'unterminated'):
+            manifest_lints('[package]\nname = "x\n')
+        quoted = self.MANIFEST.replace(
+            b'name = "runlimit-postgres"\n',
+            b'name = "runlimit-postgres"\ndescription = """Uses the mode "strict""""\n'
+            b"note = '''It is 'quoted'''''\n")
+        self.assertEqual(manifest_lints(quoted.decode()), manifest_lints(self.MANIFEST.decode()))
+
+    def test_check_cfg_inline_tables_read_and_duplicate_spellings_fail(self):
+        lints = manifest_lints(self.MANIFEST.decode() + "unexpected_cfgs = "
+                               "{ level = \"warn\", check-cfg = ['cfg(probe)'] }\n")
+        self.assertEqual(lints['clippy']['unexpected_cfgs'], 'warn')
+        for first, second in ((b'disallowed-methods', b'disallowed_methods'),
+                              (b'disallowed_method', b'disallowed_methods'),
+                              (b'disallowed-type', b'disallowed_types')):
+            conflicting = self.MANIFEST + (first + b' = { level = "allow", priority = 2 }\n'
+                                           + second + b' = { level = "warn", priority = 1 }\n')
+            with self.subTest(first=first), self.assertRaisesRegex(ValueError, 'twice'):
+                validate_sql_gate(self.tree(conflicting))
+        for alias in (b'disallowed_method', b'disallowed-type'):
+            with self.subTest(alias=alias), self.assertRaisesRegex(ValueError, 'lowers'):
+                validate_sql_gate(self.tree(self.MANIFEST + alias + b' = "allow"\n'))
+        for broken in (b'style = { level = "warn", level = "allow" }\n',
+                       b'style = { level = "warn", check-cfg = [cfg] }\n'):
+            with self.subTest(broken=broken), self.assertRaisesRegex(ValueError, 'unreadable'):
+                validate_sql_gate(self.tree(self.MANIFEST + broken))
+
+    def test_macro_reports_and_lists_read_only_what_clippy_and_toml_mean(self):
+        report = json.dumps({'reason': 'compiler-message', 'message': {
+            'code': {'code': 'clippy::disallowed_macros'},
+            'message': 'use of a disallowed macro `sqlx::query`',
+            'spans': [{'file_name': 'probe.rs', 'is_primary': True}]}})
+        denied = json.dumps({'reason': 'compiler-message', 'message': {
+            'level': 'error', 'code': {'code': 'clippy::disallowed_methods'}, 'message': 'x',
+            'spans': []}})
+        aborted = json.dumps({'reason': 'compiler-message', 'message': {
+            'level': 'error', 'code': None, 'message': 'aborting due to 2 previous errors',
+            'spans': []}})
+        self.assertEqual(macro_reports('\n'.join([report, denied, aborted, 'not json'])),
+                         ({('probe.rs', 'sqlx::query')}, []))
+        broken = json.dumps({'reason': 'compiler-message', 'message': {
+            'level': 'error', 'code': None, 'message': 'no cached data for this query',
+            'spans': []}})
+        self.assertEqual(macro_reports(broken), (set(), ['no cached data for this query']))
+        config = ('x = 1\nlist = [\n    { path = "a", reason = "r" },\n'
+                  '    # { path = "b", reason = "r" },\n]\n')
+        self.assertEqual(listed_paths(config, 'list'), ['a'])
+        with self.assertRaisesRegex(ValueError, 'unreadable'):
+            listed_paths('list = [\n    { path = "a", reason = "r" }, # x\n]\n', 'list')
+
+    def test_dropping_a_shared_clippy_setting_fails(self):
+        with self.assertRaisesRegex(ValueError, 'cognitive-complexity-threshold'):
+            validate_sql_gate(self.tree(local=b'disallowed-methods = []\n'))

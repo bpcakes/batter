@@ -15,9 +15,10 @@ use sqlx::{
 use crate::{
     BatchCheckError, CheckError, CheckPhase, CleanupPhase, MaintenanceError, PostgresConfig,
     admission::{Admission, batch_decision, finalize, single_decision},
-    base::PgLimiterBase,
+    base::{BundledHistory, PgLimiterBase},
     pending::{Pending, PendingDenial, PendingQuotaDenial, authoritative_elapsed},
     protocol::{CAPACITY_SHARD_COUNT, capacity_shard},
+    statements::gcra as sql,
     transaction::{self, BoundedConnection, CheckTransaction, ConnectionOutcome},
 };
 
@@ -33,74 +34,11 @@ pub const INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL: &str =
 
 /// Raw GCRA migrator with `SQLx`'s strict defaults. Prefer
 /// [`PostgresGcraLimiter::migrate`] for cancellation-safe pooled migration.
+#[expect(
+    clippy::disallowed_types,
+    reason = "sqlx::migrate! embeds each migration as a sqlx::SqlStr"
+)]
 pub static GCRA_MIGRATOR: Migrator = sqlx::migrate!("./gcra-migrations");
-
-const LOCK_SHARDS: &str = "SELECT capacity_shard, row_count, observed_at_ms FROM runlimit_gcra_shards WHERE capacity_shard = ANY($1) ORDER BY capacity_shard FOR UPDATE";
-const SAMPLE_TIME: &str = r"
-WITH sample AS MATERIALIZED (SELECT pg_catalog.clock_timestamp() AS database_now)
-SELECT database_now, floor(extract(epoch FROM database_now) * 1000)::BIGINT AS now_ms
-FROM sample";
-const READ_COUNTERS: &str = r"
-SELECT input.ordinality - 1 AS input_index, stored.tat_scaled::TEXT AS tat_scaled,
-    stored.expires_at_ms, pg_catalog.clock_timestamp() AS response_now
-FROM unnest($1::BYTEA[], $2::BYTEA[]) WITH ORDINALITY AS input(fingerprint, subject, ordinality)
-LEFT JOIN runlimit_gcra AS stored ON stored.config_fingerprint = input.fingerprint
-    AND stored.subject_key = input.subject
-ORDER BY input.ordinality";
-const UPSERT: &str = r"
-INSERT INTO runlimit_gcra(config_fingerprint, subject_key, tat_scaled, expires_at_ms)
-SELECT fingerprint, subject, tat::NUMERIC, expires
-FROM unnest($1::BYTEA[], $2::BYTEA[], $3::TEXT[], $4::BIGINT[]) AS input(fingerprint, subject, tat, expires)
-ON CONFLICT (config_fingerprint, subject_key) DO UPDATE
-SET tat_scaled = EXCLUDED.tat_scaled, expires_at_ms = EXCLUDED.expires_at_ms";
-const UPDATE_WATERMARKS: &str = r"
-WITH updated AS (
-    UPDATE runlimit_gcra_shards SET observed_at_ms = $2 WHERE capacity_shard = ANY($1)
-    RETURNING 1
-)
-SELECT count(*) AS updated_count, pg_catalog.clock_timestamp() AS response_now FROM updated";
-const CLEANUP_LOCKS: &str = r"
-WITH sample AS MATERIALIZED (
-    SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
-), candidates AS MATERIALIZED (
-    -- At most 256 indexed probes, each returning at most one candidate. Using
-    -- the same shard clock as admission makes logically expired slots
-    -- reclaimable even while the physical clock remains behind its watermark.
-    SELECT shard.capacity_shard FROM runlimit_gcra_shards AS shard
-    CROSS JOIN LATERAL (
-        SELECT 1 FROM runlimit_gcra AS counter
-        WHERE counter.capacity_shard = shard.capacity_shard
-            AND counter.expires_at_ms <= greatest((SELECT now_ms FROM sample), shard.observed_at_ms)
-        ORDER BY counter.expires_at_ms LIMIT 1
-    ) AS expired
-)
-SELECT capacity.capacity_shard FROM runlimit_gcra_shards AS capacity
-WHERE capacity.capacity_shard IN (SELECT capacity_shard FROM candidates)
-ORDER BY capacity.capacity_shard FOR UPDATE OF capacity SKIP LOCKED";
-// Each shard advances on its own clock. Sharing the most advanced candidate's
-// watermark would expire still-active counters in the other candidates.
-const CLEANUP_ADVANCE_TIME: &str = r"
-WITH sample AS MATERIALIZED (
-    SELECT floor(extract(epoch FROM pg_catalog.clock_timestamp()) * 1000)::BIGINT AS now_ms
-)
-UPDATE runlimit_gcra_shards
-SET observed_at_ms = greatest((SELECT now_ms FROM sample), observed_at_ms)
-WHERE capacity_shard = ANY($1)";
-const CLEANUP_DELETE: &str = r"
-WITH expired AS MATERIALIZED (
-    SELECT candidate.config_fingerprint, candidate.subject_key
-    FROM runlimit_gcra_shards AS shard
-    CROSS JOIN LATERAL (
-        SELECT config_fingerprint, subject_key, expires_at_ms FROM runlimit_gcra AS counter
-        WHERE counter.capacity_shard = shard.capacity_shard
-            AND counter.expires_at_ms <= shard.observed_at_ms
-        ORDER BY counter.expires_at_ms LIMIT $2
-    ) AS candidate
-    WHERE shard.capacity_shard = ANY($1)
-    ORDER BY candidate.expires_at_ms LIMIT $2
-)
-DELETE FROM runlimit_gcra AS stored USING expired
-WHERE stored.config_fingerprint = expired.config_fingerprint AND stored.subject_key = expired.subject_key";
 
 /// Replica-safe GCRA quotas using the same exact arithmetic as the memory store.
 ///
@@ -173,7 +111,7 @@ impl PostgresGcraLimiter {
     /// # Errors
     /// Returns `SQLx` migration or acquisition failures.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        self.base.migrate(&GCRA_MIGRATOR).await
+        self.base.migrate(BundledHistory::Gcra).await
     }
 
     /// Checks and consumes one GCRA quota. Denials consume nothing.
@@ -296,7 +234,7 @@ async fn run_transaction<D>(
     let locked = transaction
         .fetch_all(
             CheckPhase::AcquiringCapacityShardLocks,
-            sqlx::query(LOCK_SHARDS).bind(&shards),
+            sql::LOCK_SHARDS.query().bind(&shards),
         )
         .await?;
     if locked.len() != shards.len() {
@@ -304,7 +242,7 @@ async fn run_transaction<D>(
     }
     let mut counts = [0_i64; CAPACITY_SHARD_COUNT];
     let sample = transaction
-        .fetch_one(CheckPhase::PreflightingCounters, sqlx::query(SAMPLE_TIME))
+        .fetch_one(CheckPhase::PreflightingCounters, sql::SAMPLE_TIME.query())
         .await?;
     let mut now: i64 = field(&sample, "now_ms")?;
     // The watermark clamps evaluation only; elapsed time uses the real sample.
@@ -334,7 +272,8 @@ async fn run_transaction<D>(
     let rows = transaction
         .fetch_all(
             CheckPhase::PreflightingCounters,
-            sqlx::query(READ_COUNTERS)
+            sql::READ_COUNTERS
+                .query()
                 .bind(&fingerprints)
                 .bind(&subjects),
         )
@@ -397,7 +336,8 @@ async fn persist_allowances(
     let updated = transaction
         .execute(
             CheckPhase::UpdatingCounters,
-            sqlx::query(UPSERT)
+            sql::UPSERT
+                .query()
                 .bind(fingerprints)
                 .bind(subjects)
                 .bind(tats)
@@ -410,7 +350,7 @@ async fn persist_allowances(
     let response = transaction
         .fetch_one(
             CheckPhase::UpdatingCounters,
-            sqlx::query(UPDATE_WATERMARKS).bind(shards).bind(now),
+            sql::UPDATE_WATERMARKS.query().bind(shards).bind(now),
         )
         .await?;
     let updated_count: i64 = field(&response, "updated_count")?;
@@ -501,7 +441,7 @@ async fn cleanup_transaction(
     let rows = transaction
         .fetch_all(
             CleanupPhase::DeletingExpiredWindows,
-            sqlx::query(CLEANUP_LOCKS),
+            sql::CLEANUP_LOCKS.query(),
         )
         .await?;
     let shards = rows
@@ -517,13 +457,14 @@ async fn cleanup_transaction(
     transaction
         .execute(
             CleanupPhase::DeletingExpiredWindows,
-            sqlx::query(CLEANUP_ADVANCE_TIME).bind(&shards),
+            sql::CLEANUP_ADVANCE_TIME.query().bind(&shards),
         )
         .await?;
     let deleted = transaction
         .execute(
             CleanupPhase::DeletingExpiredWindows,
-            sqlx::query(CLEANUP_DELETE)
+            sql::CLEANUP_DELETE
+                .query()
                 .bind(&shards)
                 .bind(i64::from(maximum)),
         )

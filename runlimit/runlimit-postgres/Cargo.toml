@@ -31,6 +31,9 @@ tokio = { version = "1.47.1", default-features = false, features = ["time"] }
 
 [dev-dependencies]
 runlimit-memory.workspace = true
+# The workspace build enables sqlx's `any` feature through runledger-postgres;
+# the SQL gate's probes reach the Any driver's database management under it.
+sqlx = { version = "0.9.0", default-features = false, features = ["any"] }
 serde_json = { version = "1.0.140" }
 tokio = { version = "1.47.1", default-features = false, features = [
     "macros",
@@ -47,6 +50,7 @@ all-features = true
 missing_docs = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
 unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(runlimit_macro_probes)'] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

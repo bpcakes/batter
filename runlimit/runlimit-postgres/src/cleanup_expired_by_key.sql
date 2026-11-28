@@ -34,7 +34,7 @@ locked_capacity AS MATERIALIZED (
     FOR UPDATE OF capacity
 ),
 capacity_lock_barrier AS MATERIALIZED (
-    SELECT count(*) AS locked_count
+    SELECT pg_catalog.count(*) AS locked_count
     FROM locked_capacity
 )
 -- Storage keys are immutable, and every selected row stays locked by this
@@ -45,6 +45,6 @@ WHERE
     windows.config_fingerprint = expired.config_fingerprint
     AND windows.subject_key = expired.subject_key
     AND capacity_lock_barrier.locked_count = (
-        SELECT count(*)
+        SELECT pg_catalog.count(*)
         FROM target_shards
     )

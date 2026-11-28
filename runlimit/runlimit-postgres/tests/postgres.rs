@@ -1,5 +1,10 @@
 //! Opt-in integration tests against a real `PostgreSQL` database.
 
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "tests provision and inspect database state with their own SQL"
+)]
 use std::{
     future::{Future, poll_fn},
     process,

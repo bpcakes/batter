@@ -196,7 +196,69 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   `src/pending.rs` is the only place a delay loses authoritative elapsed
   time. Do not add a second connection, timeout, migration or elapsed-time
   path beside these. Live suites share `tests/support`'s `IsolatedSchema` and
-  shard-key helpers.
+  shard-key helpers. The one live unit test, `src/catalog_guard/live.rs`,
+  needs the private statement inventory and cannot reach that module, so it
+  provisions and verifies its schemas the same way (`[schema, pg_catalog]`).
+- Every operational PostgreSQL statement is a `Statement` in
+  `runlimit-postgres/src/statements/`. `Statement` is a closed enum generated
+  from each family's `statements!` block, whose text is a string literal or
+  `include_str!` of a `.sql` file directly in `src`; add a statement there,
+  and a new family to `families!`. The crate's own `clippy.toml` disallows
+  every sqlx entry point that accepts SQL text or builds SQL from a name the
+  crate supplies (migration tables, databases, `LISTEN` channels), and the
+  advisory-lock helper whose SQL resolves through `search_path`, so SQL reaches sqlx only
+  through `Statement::query`. It returns a `statements::Bound`, the one sqlx
+  query value the crate holds, and sqlx's query types are disallowed
+  elsewhere, so a helper cannot take a query built from other SQL; execute
+  through `Bound`'s methods. The other pinned exceptions are the three
+  bundled `sqlx::migrate!` statics and `PgLimiterBase::migrate`, which runs
+  only a closed `BundledHistory`. Do not suppress those lints, their groups,
+  `warnings` or `unfulfilled_lint_expectations` anywhere else, and re-read
+  sqlx's SQL-text parameters on every sqlx upgrade; `src/catalog_guard/gate.rs`
+  pins the inventory and the exceptions, and `gate/probes.rs` uses each entry
+  under an expectation that Clippy rejects it, so an entry that stops
+  resolving fails the Clippy runs. Clippy reports `disallowed_macros` outside
+  any lint scope, so `gate/macro_probes.rs` compiles only under
+  `--cfg runlimit_macro_probes` from the committed `.sqlx` metadata, and
+  `scripts/check_runlimit_workspace.py` requires each query macro to be
+  reported there; it also keeps the manifest from lowering those lints.
+  The gate holds only for compiled code, so the crate compiles conditionally
+  only on `test` and its `serde` feature, which the Clippy runs set both
+  ways, besides the one pinned `runlimit_macro_probes` module declaration;
+  `gate.rs` rejects any other `cfg` and other configuration macros such as
+  `cfg_select!`. Integration tests may use raw SQL
+  behind their crate-level allow. Each statement calls catalog functions and
+  casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
+  and `double precision` keeps both words. A qualified name `x.f` must be a
+  column of a receiver declared with stated columns (`src/catalog_guard/fields.rs`),
+  because PostgreSQL otherwise reads it as the call `f(x)` through
+  `search_path`: a migrated table or its alias, a CTE or `FROM` item with an
+  explicit column list, or a CTE or subquery whose select items name
+  themselves (a bare column reference or `AS name`, never `*`). `EXCLUDED`
+  needs exactly one `INSERT`, into a migrated table. Declare each name once
+  per statement and never as a table name or `pg_catalog`. No column definition list (`AS (v text)`) and no three-part field
+  reference. Unreserved keywords such as `materialized` count as grammar only
+  in their own clause (`AS [NOT] MATERIALIZED (query)`, `ON CONFLICT (...) DO`).
+  Call only the catalog functions `src/catalog_guard.rs` lists; adding one
+  (never one that runs SQL text, such as `query_to_xml`) is a reviewed
+  change there. A statement's migrated tables are those its own family
+  installs, as `src/catalog_guard/migrated_columns.txt` lists them; the live
+  `tests/migrate.rs` compares that list with each freshly migrated history,
+  so a new migration updates it in the same change. The guard proves that
+  a receiver PostgreSQL resolves has the named column; whether PostgreSQL
+  can resolve it where it is used is PostgreSQL's to decide, so the live
+  `src/catalog_guard/live.rs` prepares every statement, unbound, in its
+  family's freshly migrated schema. Each statement therefore types its own
+  parameters: cast one wherever its context leaves the type open
+  (`($1::BIGINT[])[1]`, `$8::pg_catalog.timestamptz`).
+  A multi-array `unnest` is spelled
+  `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
+  the unqualified spelling. `src/catalog_guard.rs` reads a restricted
+  dialect and rejects the rest: no dollar quoting or quoted identifiers,
+  casts only as `::`, and string constants only as function arguments or
+  list elements, with no backslash, whose meaning `standard_conforming_strings`
+  decides. Published migrations are exempt and immutable, and run
+  under the caller's `search_path`, which must be trusted.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.
   `SubjectKey::from_digest` exists for tests and already-opaque digests only.

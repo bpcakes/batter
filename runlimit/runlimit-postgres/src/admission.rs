@@ -13,10 +13,8 @@ use crate::{
         Pending, PendingAllowance, PendingDenial, PendingQuotaDenial, SampledAllowance,
         authoritative_elapsed,
     },
-    protocol::{
-        BATCH_ADVISORY_LOCK_SQL, BATCH_CAPACITY_LOCK_SQL, BATCH_PREFLIGHT_SQL, BATCH_ROW_LOCK_SQL,
-        BATCH_UPSERT_SQL, CAPACITY_SHARD_COUNT, advisory_lock_id, capacity_shard,
-    },
+    protocol::{CAPACITY_SHARD_COUNT, advisory_lock_id, capacity_shard},
+    statements::fixed_window as sql,
     transaction::{self, BoundedConnection, CheckTransaction, ConnectionOutcome},
 };
 
@@ -217,7 +215,7 @@ async fn acquire_advisory_locks(
     transaction
         .execute(
             CheckPhase::AcquiringLogicalKeyLocks,
-            sqlx::query(BATCH_ADVISORY_LOCK_SQL).bind(advisory_lock_ids),
+            sql::BATCH_ADVISORY_LOCK_SQL.query().bind(advisory_lock_ids),
         )
         .await
         .map(|_| ())
@@ -230,7 +228,8 @@ async fn acquire_existing_row_locks(
     transaction
         .execute(
             CheckPhase::AcquiringCounterRowLocks,
-            sqlx::query(BATCH_ROW_LOCK_SQL)
+            sql::BATCH_ROW_LOCK_SQL
+                .query()
                 .bind(input.fingerprints.as_slice())
                 .bind(input.subjects.as_slice())
                 .bind(input.lock_input_positions.as_slice()),
@@ -247,7 +246,8 @@ async fn first_capacity_denial(
     let rows = transaction
         .fetch_all(
             CheckPhase::AcquiringCapacityShardLocks,
-            sqlx::query(BATCH_CAPACITY_LOCK_SQL)
+            sql::BATCH_CAPACITY_LOCK_SQL
+                .query()
                 .bind(input.fingerprints.as_slice())
                 .bind(input.subjects.as_slice())
                 .bind(input.capacity_shards.as_slice()),
@@ -382,7 +382,8 @@ async fn preflight_batch(
     let preflight_row = transaction
         .fetch_one(
             CheckPhase::PreflightingCounters,
-            sqlx::query(BATCH_PREFLIGHT_SQL)
+            sql::BATCH_PREFLIGHT_SQL
+                .query()
                 .bind(input.fingerprints.as_slice())
                 .bind(input.subjects.as_slice())
                 .bind(input.costs.as_slice())
@@ -473,7 +474,8 @@ async fn upsert_batch(
     let rows = transaction
         .fetch_all(
             CheckPhase::UpdatingCounters,
-            sqlx::query(BATCH_UPSERT_SQL)
+            sql::BATCH_UPSERT_SQL
+                .query()
                 .bind(input.policy_ids.as_slice())
                 .bind(input.scope_ids.as_slice())
                 .bind(input.fingerprints.as_slice())

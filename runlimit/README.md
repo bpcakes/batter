@@ -635,9 +635,17 @@ process restarts. `PostgresLimiter` uses PostgreSQL time as its authority,
 locks batch keys in deterministic order, and commits an allowed batch in one
 transaction. Atomic batches use set-based lock, preflight, and update phases,
 so the number of SQL phases stays fixed as the bounded batch size grows.
-Authoritative time calls are explicitly resolved as
-`pg_catalog.clock_timestamp()`, so a caller-controlled `search_path` cannot
-substitute another clock function.
+Every catalog function and every cast to a non-keyword type in the limiters'
+operational SQL (checks, cleanup, attempts and timeout settings) is written
+with its `pg_catalog` name, authoritative time as
+`pg_catalog.clock_timestamp()` included, so a caller-controlled `search_path`
+cannot substitute a clock, `set_config`, an aggregate, `unnest` or a type. A
+closed set of statements in the crate's `statements` module is the only SQL
+it can execute, and a unit guard rejects an unqualified call or cast in any of
+them. Operators and the limiters' own tables still resolve through the
+application's `search_path`. The published migrations are immutable and are
+not qualified: run `migrate` with a `search_path` that only trusted roles can
+write to.
 
 `PostgresConfig::pool_acquire_timeout` bounds waiting for a pooled connection.
 After acquisition, the check or cleanup receives a fresh

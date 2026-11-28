@@ -1,4 +1,10 @@
 //! Live transaction, concurrency, capacity, and fencing tests for attempts.
+
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "tests provision and inspect database state with their own SQL"
+)]
 #[path = "attempts/cleanup.rs"]
 mod cleanup;
 mod support;

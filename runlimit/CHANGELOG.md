@@ -62,6 +62,57 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking:** every operational statement `runlimit-postgres` sends (checks,
+  cleanup, attempts and timeout settings) calls catalog functions and casts to
+  non-keyword types by their `pg_catalog` names: `set_config`,
+  `pg_advisory_xact_lock`, `cardinality`, `count`, `min`, `floor`, `unnest`,
+  `generate_series`, `text` and `bytea`, beside the already qualified clock. A
+  schema ahead of `pg_catalog` on the caller's `search_path` can no longer
+  replace any of them; operators and the limiters' tables still resolve
+  through it. Multi-array `unnest(a, b)` is spelled `ROWS FROM
+  (pg_catalog.unnest(a), pg_catalog.unnest(b))`, its documented equivalent.
+  Every operational statement now lives in one private `statements` module as
+  a closed `Statement` enum, and a unit guard rejects an unqualified call or
+  cast in any of them. The package's `clippy.toml` disallows every sqlx entry
+  point that accepts SQL text, so only `Statement::query` and the bundled
+  migrators send SQL. Attempt cleanup executes
+  `src/attempt_cleanup_qualified.sql`; the imported `attempt_cleanup.sql`
+  moves, byte-identical, to the provenance records. The published migrations
+  are immutable and unqualified; run `migrate` under a trusted `search_path`.
+  Results, locks and persisted state are unchanged where these names already
+  resolved to the `pg_catalog` functions, which is the default, or to
+  wrappers that behave the same (`batter-39wm.4`).
+
+  A same-named function earlier on a role's `search_path` no longer runs.
+  Where it behaved differently, for example an advisory-lock wrapper that
+  derived another key, behaviour changes without an error: during a rolling
+  deploy, old replicas lock through the wrapper and new ones through
+  `pg_catalog`, so they do not contend on the same locks. Drain the old
+  replicas before serving the new code.
+
+  It is also a run-time break for a role that may execute such a wrapper but
+  not the `pg_catalog` original. Its checks used to run through the wrapper;
+  they now call `pg_catalog` directly and fail with SQLSTATE `42501`
+  (insufficient privilege), whose server message an operator may match as
+  `permission denied for function pg_advisory_xact_lock`. This failure path
+  follows from PostgreSQL's privilege checks and is not exercised by a test
+  here, since revoking a catalog function from `PUBLIC` would affect every
+  role on a shared test database:
+
+  ```sql
+  -- Before: served by app.pg_advisory_xact_lock(bigint) on the search_path.
+  REVOKE EXECUTE ON FUNCTION pg_catalog.pg_advisory_xact_lock(bigint) FROM PUBLIC;
+  -- After: the serving role may execute each pg_catalog function itself.
+  GRANT EXECUTE ON FUNCTION
+      pg_catalog.pg_advisory_xact_lock(bigint),
+      pg_catalog.pg_advisory_xact_lock(integer, integer),
+      pg_catalog.set_config(text, text, boolean)
+  TO limiter_role;
+  ```
+
+  A role restricted the same way also needs `EXECUTE` on the other calls:
+  `cardinality`, `clock_timestamp`, `count`, `floor`, `gen_random_uuid`,
+  `generate_series`, `min`, `pg_current_xact_id` and `unnest`.
 - The `runlimit-postgres` package no longer ships `src/attempt_complete.sql`
   or `src/cleanup_expired.sql`. No code path executed either statement; both
   stay byte-identical, with their digests, as provenance records in

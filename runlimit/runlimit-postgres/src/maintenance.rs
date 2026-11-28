@@ -1,6 +1,6 @@
 use crate::{
     CleanupPhase, MaintenanceError,
-    protocol::CLEANUP_SQL,
+    statements::fixed_window as sql,
     transaction::{BoundedConnection, ConnectionOutcome, Maintenance},
 };
 
@@ -14,7 +14,7 @@ pub(crate) async fn run_cleanup_transaction(
     let deleted = transaction
         .execute(
             CleanupPhase::DeletingExpiredWindows,
-            sqlx::query(CLEANUP_SQL).bind(i64::from(maximum_rows)),
+            sql::CLEANUP_SQL.query().bind(i64::from(maximum_rows)),
         )
         .await?;
     transaction.commit().await?;

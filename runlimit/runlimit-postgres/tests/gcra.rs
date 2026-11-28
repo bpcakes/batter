@@ -1,5 +1,10 @@
 //! Opt-in GCRA tests using disposable PostgreSQL schemas.
 
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "tests provision and inspect database state with their own SQL"
+)]
 use std::{
     ops::Deref,
     sync::{Arc, Mutex},

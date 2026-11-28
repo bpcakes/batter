@@ -102,6 +102,8 @@ use sqlx::{
 mod admission;
 pub mod attempts;
 mod base;
+#[cfg(test)]
+mod catalog_guard;
 mod gcra;
 pub use gcra::{
     CREATE_RUNLIMIT_GCRA_SQL, GCRA_MIGRATOR, INDEX_RUNLIMIT_GCRA_SHARD_EXPIRY_SQL,
@@ -112,6 +114,7 @@ mod errors;
 mod maintenance;
 mod pending;
 mod protocol;
+mod statements;
 mod transaction;
 
 pub use config::{PostgresConfig, PostgresConfigError};
@@ -121,7 +124,7 @@ pub use errors::{
 pub use protocol::{CAPACITY_SHARD_COUNT, HARD_MAX_ROWS_PER_SHARD};
 
 use admission::{Admission, BatchSqlInput, batch_decision, run_check_transaction, single_decision};
-use base::PgLimiterBase;
+use base::{BundledHistory, PgLimiterBase};
 use maintenance::run_cleanup_transaction;
 use transaction::ConnectionOutcome;
 
@@ -130,11 +133,11 @@ use admission::database_integer;
 #[cfg(test)]
 use pending::PendingAllowance;
 #[cfg(test)]
-use protocol::{
-    BATCH_PREFLIGHT_SQL, BATCH_UPSERT_SQL, CLEANUP_SQL, advisory_lock_id, capacity_shard,
-};
+use protocol::{advisory_lock_id, capacity_shard};
 #[cfg(test)]
 use sqlx::postgres::types::PgInterval;
+#[cfg(test)]
+use statements::fixed_window::CLEANUP_SQL;
 #[cfg(test)]
 use tokio::time::Instant;
 #[cfg(test)]
@@ -176,6 +179,10 @@ pub const BOUND_RUNLIMIT_FIXED_WINDOW_CARDINALITY_SQL: &str =
 /// pooled application that shares `_sqlx_migrations`, prefer
 /// [`PostgresLimiter::migrate`] and configure every other participating
 /// [`Migrator`] to set [`Migrator::set_ignore_missing`] to `true`.
+#[expect(
+    clippy::disallowed_types,
+    reason = "sqlx::migrate! embeds each migration as a sqlx::SqlStr"
+)]
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// A replica-safe rate limiter backed by a `PostgreSQL` pool.
@@ -250,7 +257,7 @@ impl PostgresLimiter {
     /// Returns an error if migration metadata cannot be read or `PostgreSQL`
     /// rejects a migration.
     pub async fn migrate(&self) -> Result<(), MigrateError> {
-        self.base.migrate(&MIGRATOR).await
+        self.base.migrate(BundledHistory::FixedWindow).await
     }
 
     /// Checks and, when allowed, consumes one fixed-window quota.
@@ -1054,30 +1061,30 @@ mod tests {
     #[test]
     fn cleanup_query_is_bounded_and_nonblocking() {
         assert_eq!(
-            CLEANUP_SQL.matches("pg_catalog.clock_timestamp()").count(),
+            CLEANUP_SQL
+                .sql()
+                .matches("pg_catalog.clock_timestamp()")
+                .count(),
             1
         );
-        assert!(CLEANUP_SQL.contains("AS MATERIALIZED"));
-        assert!(CLEANUP_SQL.contains("SELECT sampled_at\n        FROM authoritative_time"));
-        assert!(!CLEANUP_SQL.contains("window_expires_at <= pg_catalog.clock_timestamp()"));
-        assert!(CLEANUP_SQL.contains("LIMIT $1"));
-        assert!(CLEANUP_SQL.contains("FOR UPDATE SKIP LOCKED"));
-        assert!(CLEANUP_SQL.contains("ORDER BY capacity.capacity_shard"));
-        assert!(CLEANUP_SQL.contains("FOR UPDATE OF capacity"));
-    }
-
-    #[test]
-    fn every_production_clock_call_is_catalog_qualified() {
-        for (name, sql) in [
-            ("batch preflight", BATCH_PREFLIGHT_SQL),
-            ("batch upsert", BATCH_UPSERT_SQL),
-            ("cleanup", CLEANUP_SQL),
-        ] {
-            let without_qualified_calls = sql.replace("pg_catalog.clock_timestamp()", "");
-            assert!(
-                !without_qualified_calls.contains("clock_timestamp()"),
-                "{name} contains a search_path-resolved clock_timestamp() call"
-            );
-        }
+        assert!(CLEANUP_SQL.sql().contains("AS MATERIALIZED"));
+        assert!(
+            CLEANUP_SQL
+                .sql()
+                .contains("SELECT sampled_at\n        FROM authoritative_time")
+        );
+        assert!(
+            !CLEANUP_SQL
+                .sql()
+                .contains("window_expires_at <= pg_catalog.clock_timestamp()")
+        );
+        assert!(CLEANUP_SQL.sql().contains("LIMIT $1"));
+        assert!(CLEANUP_SQL.sql().contains("FOR UPDATE SKIP LOCKED"));
+        assert!(
+            CLEANUP_SQL
+                .sql()
+                .contains("ORDER BY capacity.capacity_shard")
+        );
+        assert!(CLEANUP_SQL.sql().contains("FOR UPDATE OF capacity"));
     }
 }

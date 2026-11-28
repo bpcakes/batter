@@ -1,8 +1,16 @@
 //! Live coverage of the migration path every `PostgreSQL` limiter shares.
 
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "tests provision and inspect database state with their own SQL"
+)]
 mod support;
 
-use std::time::Duration;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use runlimit_postgres::{PostgresGcraLimiter, PostgresLimiter, attempts::PostgresAttemptLimiter};
 use sqlx::{PgPool, migrate::MigrateError};
@@ -25,6 +33,21 @@ impl Storage {
     }
 }
 
+impl Storage {
+    /// The statement family whose tables this history installs, as
+    /// `src/catalog_guard/migrated_columns.txt` names it.
+    const fn family(self) -> &'static str {
+        match self {
+            Self::FixedWindow => "fixed_window",
+            Self::Gcra => "gcra",
+            Self::Attempts => "attempts",
+        }
+    }
+}
+
+/// The column inventory the statement guard checks field references against.
+const MIGRATED_COLUMNS: &str = include_str!("../src/catalog_guard/migrated_columns.txt");
+
 async fn backend(pool: &PgPool) -> i32 {
     tokio::time::timeout(
         Duration::from_secs(2),
@@ -45,6 +68,66 @@ async fn advisory_locks_held(admin_pool: &PgPool, session: i32) -> i64 {
     .fetch_one(admin_pool)
     .await
     .expect("read the migration session's advisory locks")
+}
+
+/// The tables `storage`'s history leaves in `fixture`'s schema, one line
+/// each, as `src/catalog_guard/migrated_columns.txt` lists them.
+async fn migrated_tables(
+    storage: Storage,
+    fixture: &IsolatedSchema,
+) -> Result<Vec<String>, String> {
+    storage
+        .migrate(&fixture.pool)
+        .await
+        .map_err(|error| format!("installs its schema: {error}"))?;
+    let columns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT c.relname::text, a.attname::text FROM pg_catalog.pg_class AS c \
+         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+         JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid \
+         WHERE n.nspname = $1 AND c.relkind IN ('r', 'p') \
+         AND c.relname <> '_sqlx_migrations' AND a.attnum > 0 AND NOT a.attisdropped",
+    )
+    .bind(&fixture.schema)
+    .fetch_all(&fixture.admin_pool)
+    .await
+    .map_err(|error| format!("read the migrated tables' columns: {error}"))?;
+    let mut tables = BTreeMap::<String, BTreeSet<String>>::new();
+    for (table, column) in columns {
+        tables.entry(table).or_default().insert(column);
+    }
+    Ok(tables
+        .into_iter()
+        .map(|(table, columns)| {
+            let columns: Vec<String> = columns.into_iter().collect();
+            format!("{} {table} {}", storage.family(), columns.join(" "))
+        })
+        .collect())
+}
+
+// The statement guard cannot read what a migration's functions and
+// triggers leave behind, so PostgreSQL reports each history's tables.
+#[tokio::test]
+#[ignore = "requires RUNLIMIT_POSTGRES_TEST_DATABASE_URL"]
+async fn the_statement_guard_lists_the_columns_each_history_leaves() {
+    let mut migrated = Vec::new();
+    for storage in [Storage::Attempts, Storage::FixedWindow, Storage::Gcra] {
+        // Each history installs alone, into its own empty schema, which is
+        // dropped before any failure is reported.
+        let fixture = IsolatedSchema::create("inventory", 1).await;
+        let tables = migrated_tables(storage, &fixture).await;
+        fixture.teardown().await;
+        migrated.extend(tables.unwrap_or_else(|failure| panic!("{storage:?}: {failure}")));
+    }
+    let listed: Vec<&str> = MIGRATED_COLUMNS
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+        .collect();
+    assert_eq!(
+        listed,
+        migrated,
+        "src/catalog_guard/migrated_columns.txt must list each history's tables:\n{}",
+        migrated.join("\n")
+    );
 }
 
 #[tokio::test]

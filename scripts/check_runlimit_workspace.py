@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Enforce local native Runlimit identities, ownership and immutable import assets."""
+import enum
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import re
 import tarfile
 import tempfile
 
@@ -23,7 +25,28 @@ PROVENANCE_METADATA = frozenset({'.DS_Store'})
 UNEXECUTED_RECORDS = {
     '29c13de727bea2b67dec3a6cdaf7bfb317cd13f849ee4396fec293b55597d667': 'attempt_complete.sql',
     'e9b9bc4cacae015fd06f14d8e6eeb6b0e10e77f17344d52598a5828598a4a49c': 'cleanup_expired.sql',
+    '740a2ec53f208cddce451f69508e4c9264b14b74523b5fc11cf522bf7adbf243': 'attempt_cleanup.sql',
 }
+# runlimit-postgres's SQL gate lints and the Clippy groups that contain them
+# (`clippy-driver -Whelp`); see runlimit-postgres/src/catalog_guard/gate.rs.
+SQL_GATE_LINTS = frozenset({'all', 'default', 'style', 'disallowed_methods',
+                            'disallowed_types', 'disallowed_macros'})
+ENABLED_LEVELS = frozenset({'warn', 'deny', 'forbid'})
+# Clippy still applies these renamed spellings to the gate lints.
+RENAMED_LINTS = {'disallowed_method': 'disallowed_methods', 'disallowed_type': 'disallowed_types'}
+# The probe query, inline and in probe.sql, whose offline metadata the macro
+# probes expand from.
+PROBE_QUERY = 'SELECT 1 AS one'
+# A `[lints.rust]` or `[lints.clippy]` header, and one entry inside it.
+LINT_TABLE = re.compile(r'^\[lints(?:\.(rust|clippy))?\]\s*(?:#.*)?$')
+LINT_ENTRY = re.compile(r'^([A-Za-z0-9_-]+)\s*=\s*(?:"([a-z]+)"|\{(.*)\})\s*(?:#.*)?$')
+# One field of an inline lint table: a quoted level, an integer priority, or
+# a one-line array of quoted check-cfg strings.
+INLINE_FIELD = re.compile(r'\s*(level|priority|check-cfg)\s*=\s*("[a-z]+"|-?\d+|'
+                          r'\[\s*(?:(?:"[^"\\]*"|\'[^\']*\')\s*,?\s*)*\])\s*(?:,|$)')
+# The query macros Clippy reports outside any lint scope; see
+# runlimit-postgres/src/catalog_guard/gate/macro_probes.rs.
+MACRO_PROBES = 'src/catalog_guard/gate/macro_probes.rs'
 
 
 def validate_graph(metadata, root):
@@ -113,6 +136,267 @@ def validate_provenance(root, expected, required=None):
             raise ValueError('provenance holds an uninventoried file: ' + name)
 
 
+def toml_lines(text):
+    """The lines of a TOML document: TOML ends a line only at LF or CRLF, so
+    U+2028 and the other separators `str.splitlines` honours stay in it."""
+    return [line[:-1] if line.endswith('\r') else line for line in text.split('\n')]
+
+
+def first_key(dotted):
+    """The first component of a dotted TOML key, unquoted, or None for an escaped one.
+
+    Only that component matters: an escape in a later one, as in
+    `[target."cfg(target_os = \\"linux\\")".dependencies]`, leaves it readable.
+    """
+    match = re.match(r'\s*(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([A-Za-z0-9_-]+))', dotted)
+    if not match:
+        return None if '\\' in dotted.split('.', 1)[0] else ''
+    if match.group(1) is not None and '\\' in match.group(1):
+        return None
+    return next(part for part in match.groups() if part is not None)
+
+
+def inline_level(fields):
+    """The level of an inline lint table's fields, or None unless every field is readable."""
+    found, position = {}, 0
+    while position < len(fields):
+        match = INLINE_FIELD.match(fields, position)
+        if not match or match.group(1) in found or match.end() == position:
+            return None
+        found[match.group(1)] = match.group(2)
+        position = match.end()
+    level = found.get('level', '')
+    return level.strip('"') if level.startswith('"') else None
+
+
+def listed_paths(config, key):
+    """The paths of one clippy.toml list's active `{ path = ..., reason = ... },` lines.
+
+    An entry may end `, allow-invalid = true },` for an item only some builds
+    compile, as the gate's probes show it still resolves where it exists.
+    """
+    lines = iter(toml_lines(config))
+    if f'{key} = [' not in lines:
+        raise ValueError(f'clippy.toml has no {key} list')
+    paths = []
+    for line in (line.strip() for line in lines):
+        if line == ']':
+            return paths
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'\{ path = "([^"]+)", reason = "[^"]*"(?:, allow-invalid = true)? \},', line)
+        if not match:
+            raise ValueError(f'clippy.toml {key}: unreadable line {line}')
+        paths.append(match.group(1))
+    raise ValueError(f'clippy.toml {key} is not closed')
+
+
+# The SQL gate's lints, which the probes trigger.
+GATE_CODES = frozenset({'clippy::disallowed_macros', 'clippy::disallowed_methods',
+                        'clippy::disallowed_types'})
+
+
+def macro_reports(messages):
+    """Read Clippy's JSON `messages` into the `(file, macro)` pairs reported as
+    disallowed macros and the errors that are not the gate's own diagnostics."""
+    reports, unexpected = set(), []
+    for line in messages.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        diagnostic = message.get('message') or {}
+        if message.get('reason') != 'compiler-message':
+            continue
+        code = (diagnostic.get('code') or {}).get('code')
+        text = diagnostic.get('message', '')
+        name = re.search(r'disallowed macro `([^`]+)`', text)
+        if code == 'clippy::disallowed_macros' and name:
+            reports.update((span['file_name'], name.group(1))
+                           for span in diagnostic.get('spans', []) if span.get('is_primary'))
+        elif (diagnostic.get('level') == 'error' and code not in GATE_CODES
+              and not text.startswith('aborting due to')):
+            unexpected.append(text)
+    return reports, unexpected
+
+
+def validate_macro_probes(root):
+    """Require Clippy to report every disallowed query macro at its probe.
+
+    `disallowed_macros` is reported outside any local lint scope, so an
+    attribute cannot expect it; the probes compile only under
+    `--cfg runlimit_macro_probes`, which this check passes to Clippy. They
+    expand from the committed `.sqlx` metadata, so SQLx runs offline whatever
+    the caller's environment says. Every lint is capped at warn, a forbidden
+    one included, which no later `-W` could lower, and the gate lints and
+    `warnings` are raised to warn, so the expected reports never fail the
+    build: the run must both succeed and report each macro at its probe.
+    """
+    package = (Path(root) / 'runlimit' / 'runlimit-postgres').resolve()
+    expected = set(listed_paths((package / 'clippy.toml').read_text(), 'disallowed-macros'))
+    cache = package / '.sqlx'
+    probe_file = (package / MACRO_PROBES).with_name('probe.sql').read_text()
+    for query in (PROBE_QUERY, probe_file):
+        entry = cache / f'query-{hashlib.sha256(query.encode()).hexdigest()}.json'
+        if not entry.is_file() or json.loads(entry.read_text()).get('query') != query:
+            raise ValueError(f'runlimit-postgres/.sqlx lacks the probe metadata for {query!r}')
+    # The package's own cache only: SQLx would read SQLX_OFFLINE_DIR first.
+    environment = {**os.environ, 'SQLX_OFFLINE': 'true', 'SQLX_OFFLINE_DIR': str(cache)}
+    result = subprocess.run(
+        ['cargo', 'clippy', '-p', 'runlimit-postgres', '--lib', '--tests', '--locked',
+         '--message-format=json', '--', '--cfg', 'runlimit_macro_probes',
+         '--cap-lints', 'warn', '-W', 'warnings',
+         *(flag for code in sorted(GATE_CODES) for flag in ('-W', code))],
+        cwd=root, env=environment, capture_output=True, text=True)
+    reports, errors = macro_reports(result.stdout)
+    probes = f'runlimit/runlimit-postgres/{MACRO_PROBES}'
+    reported = {name for file, name in reports if file == probes}
+    if result.returncode != 0 or errors:
+        raise ValueError('the macro probes failed to build:\n'
+                         + '\n'.join(errors or [result.stderr[-4000:]]))
+    if reported != expected:
+        raise ValueError(f'Clippy must report each disallowed macro at its probe; '
+                         f'missing {sorted(expected - reported)}')
+
+
+def top_level_lines(text):
+    """Each line of a TOML document that starts outside a value, with its number.
+
+    A line inside a multi-line string or a multi-line array continues the
+    value before it, so a `[` there opens no table. A single-line string left
+    open at the end of its line is no TOML this reader trusts, so it raises.
+    """
+    quote, depth = None, 0
+    for number, raw in enumerate(toml_lines(text), 1):
+        if quote is None and depth == 0:
+            yield number, raw
+            if raw.strip().startswith('['):
+                continue
+        index = 0
+        while index < len(raw):
+            if quote in ('"""', "'''"):
+                if raw.startswith(quote, index):
+                    # Up to two quotes may end the content before the
+                    # closing three, so the whole run closes the string.
+                    run = len(raw) - index - len(raw[index:].lstrip(quote[0]))
+                    if run > 5:
+                        raise ValueError(f'Cargo.toml:{number}: unreadable string delimiter')
+                    quote, index = None, index + run
+                else:
+                    index += 2 if quote == '"""' and raw[index] == '\\' else 1
+                continue
+            if quote is not None:
+                if quote == '"' and raw[index] == '\\':
+                    index += 2
+                    continue
+                if raw[index] == quote:
+                    quote = None
+                index += 1
+                continue
+            if raw.startswith('"""', index) or raw.startswith("'''", index):
+                quote, index = raw[index:index + 3], index + 3
+                continue
+            character = raw[index]
+            if character in '"\'':
+                quote = character
+            elif character == '#':
+                break
+            elif character in '[{':
+                depth += 1
+            elif character in ']}':
+                depth = max(depth - 1, 0)
+            index += 1
+        if quote in ('"', "'"):
+            raise ValueError(f'Cargo.toml:{number}: unterminated string')
+
+
+class Section(enum.Enum):
+    """Where the manifest reader is: each header makes one transition, and
+    each entry has one reading in the section it is in."""
+    ROOT = 'root'      # before any header: a dotted `lints` key would set a level
+    OTHER = 'other'    # a table other than the lint tables: no entry is a lint
+    RUST = 'rust'      # [lints.rust]
+    CLIPPY = 'clippy'  # [lints.clippy]
+
+
+def manifest_lints(text):
+    """The `[lints.rust]` and `[lints.clippy]` levels of a repository-controlled manifest.
+
+    This is a fail-closed reader for that schema, not a TOML parser, so the
+    verification entrypoint keeps its Python 3.9 minimum: a lint set in any
+    other table, as a dotted key or in any other form raises. Names are
+    normalized to underscores, as Cargo accepts either spelling.
+    """
+    levels = {'rust': {}, 'clippy': {}}
+    section = Section.ROOT
+    for number, raw in top_level_lines(text):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('['):
+            match = LINT_TABLE.match(line)
+            if match and match.group(1) is None:
+                raise ValueError('runlimit-postgres sets [lints], which inherits or nests lint '
+                                 'levels; its SQL gate sets [lints.rust] and [lints.clippy]')
+            # Any other spelling of a lints table, quoted or escaped, fails closed.
+            if not match and first_key(line.lstrip('[')) in ('lints', None):
+                raise ValueError(f'Cargo.toml:{number}: unsupported lint table {line}')
+            section = Section(match.group(1)) if match else Section.OTHER
+            continue
+        if section is Section.ROOT:
+            if first_key(line) in ('lints', None):
+                raise ValueError(f'Cargo.toml:{number}: set lints in [lints.rust] or [lints.clippy]')
+            continue
+        if section is Section.OTHER:
+            continue
+        table = section.value
+        entry = LINT_ENTRY.match(line)
+        level = entry and (entry.group(2) or inline_level(entry.group(3) or ''))
+        if not level:
+            raise ValueError(f'Cargo.toml:{number}: unreadable lint entry {line}')
+        name = entry.group(1).replace('-', '_')
+        name = RENAMED_LINTS.get(name, name) if table == 'clippy' else name
+        # Cargo applies every spelling of a lint, so one would hide another.
+        if name in levels[table]:
+            raise ValueError(f'Cargo.toml:{number}: lints.{table} sets {name} twice')
+        levels[table][name] = level
+    return levels
+
+
+def validate_sql_gate(root):
+    """Keep runlimit-postgres's SQL gate lints enabled and its Clippy settings whole.
+
+    The crate's clippy.toml disallows every sqlx entry point that accepts SQL
+    text, and its packaged unit tests pin that inventory. This checkout check
+    covers what those tests cannot read reliably: the manifest must not lower
+    a gate lint, a group containing one, rustc's `warnings` or the
+    `unfulfilled_lint_expectations` that fails an unmet gate probe, nor inherit
+    workspace levels, and the crate's clippy.toml, which Clippy reads instead
+    of runlimit/clippy.toml, must repeat every shared setting.
+    """
+    package = Path(root) / 'runlimit' / 'runlimit-postgres'
+    lints = manifest_lints((package / 'Cargo.toml').read_text())
+    clippy = lints['clippy']
+    if clippy.get('all') not in ENABLED_LEVELS:
+        raise ValueError('runlimit-postgres must enable clippy::all, which holds its SQL gate')
+    lowered = [f'clippy::{name}' for name, level in clippy.items()
+               if name in SQL_GATE_LINTS and level not in ENABLED_LEVELS]
+    lowered += [name for name, level in lints['rust'].items()
+                if name in ('warnings', 'unfulfilled_lint_expectations')
+                and level not in ENABLED_LEVELS]
+    if lowered:
+        raise ValueError(f'runlimit-postgres lowers its SQL gate lints: {sorted(lowered)}')
+    # The shared file holds scalar `key = value` settings; each must appear as
+    # the same top-level line in the crate's file.
+    local = {line.strip() for line in toml_lines((package / 'clippy.toml').read_text())}
+    dropped = sorted(line.strip() for line in
+                     toml_lines((Path(root) / 'runlimit' / 'clippy.toml').read_text())
+                     if line.strip() and not line.strip().startswith('#')
+                     and line.strip() not in local)
+    if dropped:
+        raise ValueError(f'runlimit-postgres/clippy.toml drops shared settings: {dropped}')
+
+
 def is_provenance_path(native, name):
     """Whether inventory `name` is a canonical path that resolves in provenance/."""
     parts = name.split('/')
@@ -186,6 +470,8 @@ if __name__ == '__main__':
         ['cargo', 'metadata', '--format-version', '1', '--all-features', '--locked'], cwd=ROOT))
     validate_graph(metadata, ROOT)
     validate_assets(ROOT)
+    validate_sql_gate(ROOT)
+    validate_macro_probes(ROOT)
     expected = json.loads((ROOT / 'runlimit' / 'upstream-assets.json').read_text())
     with tempfile.TemporaryDirectory(prefix='runlimit-package-') as scratch:
         validate_published(package_archives(ROOT, scratch), record_contents(ROOT, expected))

@@ -8,7 +8,7 @@ use std::{num::NonZeroU32, time::Duration};
 
 /// The lease columns of one `runlimit_attempts` row, exactly as stored.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct StoredAttempt {
+pub(crate) struct StoredAttempt {
     pub(super) failures: i64,
     pub(super) last_failure_ms: i64,
     pub(super) retry_at_ms: i64,
@@ -16,9 +16,6 @@ pub(super) struct StoredAttempt {
 }
 
 impl StoredAttempt {
-    /// Locks the subject's row and reads exactly the columns [`Self::read`] decodes.
-    pub(super) const LOCK_SQL: &str = "SELECT failures,last_failure_ms,retry_at_ms,lease_until_ms FROM runlimit_attempts WHERE config_fingerprint=$1 AND subject_key=$2 FOR UPDATE";
-
     pub(super) fn read(row: &PgRow) -> Result<Self, sqlx::Error> {
         Ok(Self {
             failures: row.try_get("failures")?,

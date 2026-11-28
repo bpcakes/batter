@@ -11,14 +11,14 @@ use std::{future::Future, marker::PhantomData};
 use sqlx::{
     Acquire, PgPool, Postgres, Transaction,
     pool::PoolConnection,
-    postgres::{PgArguments, PgQueryResult, PgRow},
-    query::Query,
+    postgres::{PgQueryResult, PgRow},
 };
 use tokio::time::{Instant, timeout, timeout_at};
 
 use crate::{
     CheckError, CheckPhase, CleanupPhase, MaintenanceError, PostgresConfig,
-    protocol::{SET_LOCAL_TIMEOUTS_SQL, is_server_timeout, remaining_server_timeout_settings},
+    protocol::{is_server_timeout, remaining_server_timeout_settings},
+    statements::{Bound, session::SET_LOCAL_TIMEOUTS_SQL},
 };
 
 /// Whether the connection that produced a value may return to its pool.
@@ -260,7 +260,8 @@ impl<F: Family> BoundedTransaction<'_, F> {
         before_commit::<F, _>(
             self.deadline,
             phase,
-            sqlx::query(SET_LOCAL_TIMEOUTS_SQL)
+            SET_LOCAL_TIMEOUTS_SQL
+                .query()
                 .bind(statement_timeout)
                 .bind(lock_timeout)
                 .execute(&mut *self.inner),
@@ -272,7 +273,7 @@ impl<F: Family> BoundedTransaction<'_, F> {
     pub(crate) async fn execute(
         &mut self,
         phase: F::Phase,
-        query: Query<'_, Postgres, PgArguments>,
+        query: Bound<'_>,
     ) -> Result<PgQueryResult, ConnectionOutcome<F::Error>> {
         self.refresh_timeouts(F::refreshing_timeouts(phase)).await?;
         before_commit::<F, _>(self.deadline, phase, query.execute(&mut *self.inner)).await
@@ -281,7 +282,7 @@ impl<F: Family> BoundedTransaction<'_, F> {
     pub(crate) async fn fetch_all(
         &mut self,
         phase: F::Phase,
-        query: Query<'_, Postgres, PgArguments>,
+        query: Bound<'_>,
     ) -> Result<Vec<PgRow>, ConnectionOutcome<F::Error>> {
         self.refresh_timeouts(F::refreshing_timeouts(phase)).await?;
         before_commit::<F, _>(self.deadline, phase, query.fetch_all(&mut *self.inner)).await
@@ -290,7 +291,7 @@ impl<F: Family> BoundedTransaction<'_, F> {
     pub(crate) async fn fetch_one(
         &mut self,
         phase: F::Phase,
-        query: Query<'_, Postgres, PgArguments>,
+        query: Bound<'_>,
     ) -> Result<PgRow, ConnectionOutcome<F::Error>> {
         self.refresh_timeouts(F::refreshing_timeouts(phase)).await?;
         before_commit::<F, _>(self.deadline, phase, query.fetch_one(&mut *self.inner)).await
