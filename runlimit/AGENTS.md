@@ -234,7 +234,13 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   change there. A statement's migrated tables are those its own family
   installs, as `src/catalog_guard/migrated_columns.txt` lists them; the live
   `tests/migrate.rs` compares that list with each freshly migrated history,
-  so a new migration updates it in the same change.
+  so a new migration updates it in the same change. The guard proves that
+  a receiver PostgreSQL resolves has the named column; whether PostgreSQL
+  can resolve it where it is used is PostgreSQL's to decide, so the live
+  `src/catalog_guard/live.rs` prepares every statement, unbound, in its
+  family's freshly migrated schema. Each statement therefore types its own
+  parameters: cast one wherever its context leaves the type open
+  (`($1::BIGINT[])[1]`, `$8::pg_catalog.timestamptz`).
   A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
   the unqualified spelling. `src/catalog_guard.rs` reads a restricted

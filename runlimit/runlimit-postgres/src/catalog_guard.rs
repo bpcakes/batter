@@ -39,6 +39,7 @@ use std::{
 mod detector;
 mod fields;
 mod gate;
+mod live;
 
 use detector::{catalog_calls, unqualified};
 

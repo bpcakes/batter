@@ -20,8 +20,12 @@
 //!
 //! Each declared name is declared once per statement and names neither a
 //! migrated table nor `pg_catalog`, so it means one relation wherever it
-//! appears and no query-block scoping is needed. A field of anything but a
-//! declared relation fails.
+//! appears: a receiver PostgreSQL resolves is the relation checked here,
+//! and a column of it is never read as a call. A field of anything but a
+//! declared relation fails. Query blocks (`blocks.rs`) narrow where a
+//! receiver is visible; the rest of PostgreSQL's scoping (`LATERAL` order,
+//! a join's operands, an INSERT target outside its source query) is
+//! PostgreSQL's own to decide, when `live.rs` prepares every statement.
 
 use std::collections::{BTreeMap, BTreeSet};
 

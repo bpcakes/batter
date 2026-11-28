@@ -3,14 +3,14 @@
 statements! {
     BATCH_ADVISORY_LOCK_SQL = r"
 WITH RECURSIVE acquired(position, locked) AS (
-    SELECT 1, pg_catalog.pg_advisory_xact_lock($1[1])
+    SELECT 1, pg_catalog.pg_advisory_xact_lock(($1::BIGINT[])[1])
     WHERE pg_catalog.cardinality($1::BIGINT[]) > 0
 
     UNION ALL
 
     SELECT
         acquired.position + 1,
-        pg_catalog.pg_advisory_xact_lock($1[acquired.position + 1])
+        pg_catalog.pg_advisory_xact_lock(($1::BIGINT[])[acquired.position + 1])
     FROM acquired
     WHERE acquired.position < pg_catalog.cardinality($1::BIGINT[])
 )
@@ -201,8 +201,8 @@ upserted AS (
         scope_id,
         config_fingerprint,
         subject_key,
-        $8,
-        $8 + window_size,
+        $8::pg_catalog.timestamptz,
+        $8::pg_catalog.timestamptz + window_size,
         cost
     FROM input
     ON CONFLICT (config_fingerprint, subject_key)
@@ -210,20 +210,20 @@ upserted AS (
         policy_id = EXCLUDED.policy_id,
         scope_id = EXCLUDED.scope_id,
         window_started_at = CASE
-            WHEN runlimit_fixed_windows.window_expires_at <= $8 THEN $8
+            WHEN runlimit_fixed_windows.window_expires_at <= $8::pg_catalog.timestamptz THEN $8::pg_catalog.timestamptz
             ELSE runlimit_fixed_windows.window_started_at
         END,
         window_expires_at = CASE
-            WHEN runlimit_fixed_windows.window_expires_at <= $8
-                THEN $8 + (EXCLUDED.window_expires_at - EXCLUDED.window_started_at)
+            WHEN runlimit_fixed_windows.window_expires_at <= $8::pg_catalog.timestamptz
+                THEN $8::pg_catalog.timestamptz + (EXCLUDED.window_expires_at - EXCLUDED.window_started_at)
             ELSE runlimit_fixed_windows.window_expires_at
         END,
         used = CASE
-            WHEN runlimit_fixed_windows.window_expires_at <= $8 THEN EXCLUDED.used
+            WHEN runlimit_fixed_windows.window_expires_at <= $8::pg_catalog.timestamptz THEN EXCLUDED.used
             ELSE runlimit_fixed_windows.used + EXCLUDED.used
         END
     WHERE
-        runlimit_fixed_windows.window_expires_at <= $8
+        runlimit_fixed_windows.window_expires_at <= $8::pg_catalog.timestamptz
         OR runlimit_fixed_windows.used
             <= (
                 SELECT quota_limit - cost

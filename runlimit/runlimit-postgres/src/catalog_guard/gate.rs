@@ -178,6 +178,31 @@ fn exceptions() -> Vec<(&'static str, String)> {
         )
     };
     vec![
+        // The live check asks PostgreSQL to prepare each closed-set
+        // statement in a schema it creates and drops for each family.
+        (
+            "catalog_guard/live.rs",
+            "#[expect(clippy::disallowed_methods, reason = \"PostgreSQL prepares each closed-set statement\")]
+             async fn prepare(pool: &PgPool, statement: Statement) -> Result<(), sqlx::Error> {
+                 let mut connection = pool.acquire().await?;
+                 connection
+                     .prepare(SqlSafeStr::into_sql_str(statement.sql()))
+                     .await
+                     .map(drop)
+             }"
+            .to_owned(),
+        ),
+        (
+            "catalog_guard/live.rs",
+            "#[expect(clippy::disallowed_methods, reason = \"the live check administers its own schema\")]
+             async fn administer(admin: &PgPool, sql: String) {
+                 sqlx::query(AssertSqlSafe(sql))
+                     .execute(admin)
+                     .await
+                     .expect(\"administer the check's schema\");
+             }"
+            .to_owned(),
+        ),
         (
             "statements.rs",
             "#[expect(clippy::disallowed_methods, reason = \"the one place SQL text reaches sqlx\")]
