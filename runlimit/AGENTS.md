@@ -161,7 +161,7 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   `runlimit-http` module (`draft_12`, `draft_11`) that spells only its field
   names and parameter keys. Policy-name validation, the Structured Field integer
   range, `HeaderField` and `EncodingError` exist once, at the crate root, so
-  every revision rejects an input with the same error. A revision encodes only
+  every revision rejects a field they share with the same error. A revision encodes only
   what a decision states exactly: `draft_12` sends an allowance's available
   quota, never a window no decision states or a remainder a denial does not. A
   superseded revision is a wire format clients parse: its module keeps emitting

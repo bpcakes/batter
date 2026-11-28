@@ -248,8 +248,9 @@ New code uses `draft_12`. `draft_11` still emits exactly the `-11` fields, so an
 application whose clients parse `r` and `t` can switch them to `-12` as a
 staged rollout; its removal is tracked as `batter-6u2p` and announced in the
 [changelog](CHANGELOG.md). Both modules share one validation at the crate root:
-the same name or number fails with the same `runlimit_http::EncodingError`
-whichever revision is selected.
+a policy name, policy or available quota fails with the same
+`runlimit_http::EncodingError` whichever revision is selected. Only `-11`
+encodes a window, so only it can reject one.
 
 The helpers return typed HTTP header names and values. They do not select a
 response status or body, emit `Retry-After`, expose partition keys, or decide

@@ -1,6 +1,6 @@
-//! Every draft module shares one validation and one integer range, so the
-//! same name or number fails with the same error whichever revision a caller
-//! selects. The `-11` [`QuotaState`] input is checked here too.
+//! Every draft module shares one validation and one integer range, so a
+//! field both encode fails with the same error whichever revision a caller
+//! selects; only `-11` encodes a window, so only it can reject one. The `-11` [`QuotaState`] input is checked here too.
 
 #[path = "fixtures/decisions.rs"]
 mod fixtures;

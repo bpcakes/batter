@@ -4,7 +4,7 @@
 //! Each draft module spells its own field names and parameter keys; this
 //! module owns everything those spellings have in common: the policy-name
 //! String item, the Integer range, the whole-second policy window, and the one
-//! error type. Every draft therefore rejects the same input with the same
+//! error type. Every draft therefore rejects a field they share with the same
 //! error.
 
 use std::time::Duration;
@@ -134,9 +134,11 @@ pub(crate) fn policy_window(period: QuotaPeriod) -> Result<u64, EncodingError> {
 
 /// Failure to encode `RateLimit-Policy` or `RateLimit` response metadata.
 ///
-/// Every draft module returns this one type and validates its input in the
-/// same order, so the same input fails with the same error whichever revision
-/// the caller selected.
+/// Every draft module returns this one type and validates the fields they
+/// share in the same order (the policy name first, then each number), so a
+/// shared field fails with the same error whichever revision the caller
+/// selected. A field only one revision encodes, such as `-11`'s effective
+/// window, fails only there.
 ///
 /// Migration: this replaces `runlimit_http::draft_11::EncodingError`; its
 /// variants are unchanged.

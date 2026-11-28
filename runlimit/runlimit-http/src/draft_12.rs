@@ -17,7 +17,9 @@
 //! `RateLimit-Policy` is spelled as in `-11`, and `RateLimit` renames `-11`'s
 //! `r` to `a`. Policy-name validation, the integer range and
 //! [`EncodingError`] are shared with every draft module at the crate root, so
-//! a name or number `-11` rejects fails here with the same error.
+//! a policy name, policy or available quota `-11` rejects fails here with the
+//! same error. `-11` also rejects a window too large to encode, which this
+//! module does not send.
 //!
 //! These parts of `-12` are not emitted:
 //!

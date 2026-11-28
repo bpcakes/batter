@@ -23,8 +23,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   how many units remain; a denied response carries `Retry-After` from
   `QuotaDenial::retry_after` and can carry `RateLimit-Policy`. Both modules
   share one policy-name validation and integer range at the crate root, so a
-  name or number fails with the same `EncodingError` whichever revision is
-  selected. `draft_12` omits the optional `c` cost parameter, because a
+  policy name, policy or available quota fails with the same `EncodingError`
+  whichever revision is selected; only `-11` encodes a window, so only it can
+  reject one. `draft_12` omits the optional `c` cost parameter, because a
   decision does not carry the cost of its check, and does not implement the
   new `RateLimit-Partition` field, because a Runlimit policy records neither
   the application's partition dimensions nor which requests it applies to.
