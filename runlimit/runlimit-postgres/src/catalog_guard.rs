@@ -72,6 +72,20 @@ fn command_form(sql: &str) -> Option<String> {
     {
         return Some("more than one command".to_owned());
     }
+    // `SELECT ... INTO` creates a table; only `INSERT INTO` writes one. INTO
+    // is reserved, so the word is always the keyword.
+    let words: Vec<String> = code
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if words
+        .iter()
+        .enumerate()
+        .any(|(at, word)| word == "into" && (at == 0 || words[at - 1] != "insert"))
+    {
+        return Some("a SELECT INTO, which creates a table".to_owned());
+    }
     let first = code
         .trim_start()
         .split(|c: char| !c.is_ascii_alphabetic())
@@ -239,6 +253,20 @@ fn only_the_listed_catalog_functions_may_be_called() {
         Some("more than one command".to_owned())
     );
     assert_eq!(command_form("SELECT 1; -- done\n"), None);
+    for creates in [
+        "SELECT 1 AS n INTO TEMP TABLE quota_sample",
+        "WITH s AS (SELECT 1 AS n) SELECT n INTO sampled FROM s",
+    ] {
+        assert_eq!(
+            command_form(creates),
+            Some("a SELECT INTO, which creates a table".to_owned()),
+            "{creates}"
+        );
+    }
+    assert_eq!(
+        command_form("WITH w AS (INSERT INTO t (n) VALUES (1) RETURNING n) SELECT n FROM w"),
+        None
+    );
 }
 
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
@@ -252,6 +280,12 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT a.row_to_json AS row_to_json FROM t AS a",
         "SELECT a.label FROM t AS a JOIN u AS b ON TRUE",
         "SELECT missing.id FROM t",
+        // Every relation is checked, aliased or not, and so is an INSERT target.
+        "SELECT pg_catalog.count(*) FROM elsewhere AS e",
+        "SELECT a.id FROM t AS a JOIN elsewhere AS e ON TRUE",
+        "INSERT INTO elsewhere AS e (id) VALUES (1)",
+        "INSERT INTO elsewhere (id) VALUES (1)",
+        "SELECT e.id FROM other.t AS e",
         "SELECT (a).row_to_json FROM t AS a",
         // Only a bare column reference or an `AS` item names a column.
         "WITH c AS (SELECT * FROM t) SELECT c.id FROM c",

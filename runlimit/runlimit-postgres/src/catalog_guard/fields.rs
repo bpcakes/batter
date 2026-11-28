@@ -328,6 +328,19 @@ fn declarations<'t>(
             Some("from" | "using") => true,
             Some("update") if !matches!(previous, Some("for" | "do" | "key")) => false,
             Some("into") if previous == Some("insert") => {
+                // The target is a table the family installs, aliased or not.
+                match word(tokens, index + 1) {
+                    Some(target) if punct(tokens, index + 2, '.') => declarations
+                        .problems
+                        .push(format!("{target}. is a schema-qualified INSERT target")),
+                    Some(target) if !declarations.tables.contains_key(target) => declarations
+                        .problems
+                        .push(format!("{target} is written, but is no migrated table")),
+                    Some(_) => {}
+                    None => declarations
+                        .problems
+                        .push("an INSERT target the guard cannot read".to_owned()),
+                }
                 if let (Some(target), true, Some(alias)) = (
                     word(tokens, index + 1),
                     is(tokens, index + 2, "as"),
@@ -398,35 +411,37 @@ fn record_from_item(
     {
         problem(declarations, "unread tokens in a FROM item".to_owned());
     }
-    let Some(alias) = &item.alias else {
-        match &item.source {
-            // An unaliased relation's row name is its own: a migrated table
-            // or a CTE of this statement, never an untracked relation whose
-            // name a declaration elsewhere could stand for.
-            ItemSource::Relation(name) if target && !declarations.tables.contains_key(name) => {
-                problem(
-                    declarations,
-                    format!("{name} is written, but is no migrated table"),
-                );
-            }
-            ItemSource::Relation(name)
-                if !declarations.tables.contains_key(name) && !declarations.ctes.contains(name) =>
-            {
-                problem(
-                    declarations,
-                    format!("{name} in FROM is neither a migrated table nor a CTE"),
-                );
-            }
-            ItemSource::Qualified(name) => problem(
+    // Every relation an item reads or writes is a table the statement's
+    // family installs or, when read, a CTE of this statement, whether or
+    // not it is aliased; a write target is always such a table.
+    match &item.source {
+        ItemSource::Relation(name) if target && !declarations.tables.contains_key(name) => {
+            problem(
                 declarations,
-                format!("{name} in FROM is schema-qualified, so it is no migrated table or CTE"),
-            ),
-            // A function's implicit row name could shadow another relation.
-            ItemSource::Function => problem(
+                format!("{name} is written, but is no migrated table"),
+            );
+        }
+        ItemSource::Relation(name)
+            if !declarations.tables.contains_key(name) && !declarations.ctes.contains(name) =>
+        {
+            problem(
+                declarations,
+                format!("{name} in FROM is neither a migrated table nor a CTE"),
+            );
+        }
+        ItemSource::Qualified(name) => problem(
+            declarations,
+            format!("{name} in FROM is schema-qualified, so it is no migrated table or CTE"),
+        ),
+        _ => {}
+    }
+    let Some(alias) = &item.alias else {
+        // A function's implicit row name could shadow another relation.
+        if matches!(item.source, ItemSource::Function) {
+            problem(
                 declarations,
                 "a function in FROM without an alias".to_owned(),
-            ),
-            _ => {}
+            );
         }
         return;
     };
