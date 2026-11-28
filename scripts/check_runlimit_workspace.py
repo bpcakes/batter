@@ -242,6 +242,52 @@ def validate_macro_probes(root):
                          f'missing {sorted(expected - reported)}')
 
 
+def top_level_lines(text):
+    """Each line of a TOML document that starts outside a value, with its number.
+
+    A line inside a multi-line string or a multi-line array continues the
+    value before it, so a `[` there opens no table. A single-line string left
+    open at the end of its line is no TOML this reader trusts, so it raises.
+    """
+    quote, depth = None, 0
+    for number, raw in enumerate(text.splitlines(), 1):
+        if quote is None and depth == 0:
+            yield number, raw
+            if raw.strip().startswith('['):
+                continue
+        index = 0
+        while index < len(raw):
+            if quote in ('"""', "'''"):
+                if raw.startswith(quote, index):
+                    quote, index = None, index + 3
+                else:
+                    index += 2 if quote == '"""' and raw[index] == '\\' else 1
+                continue
+            if quote is not None:
+                if quote == '"' and raw[index] == '\\':
+                    index += 2
+                    continue
+                if raw[index] == quote:
+                    quote = None
+                index += 1
+                continue
+            if raw.startswith('"""', index) or raw.startswith("'''", index):
+                quote, index = raw[index:index + 3], index + 3
+                continue
+            character = raw[index]
+            if character in '"\'':
+                quote = character
+            elif character == '#':
+                break
+            elif character in '[{':
+                depth += 1
+            elif character in ']}':
+                depth = max(depth - 1, 0)
+            index += 1
+        if quote in ('"', "'"):
+            raise ValueError(f'Cargo.toml:{number}: unterminated string')
+
+
 def manifest_lints(text):
     """The `[lints.rust]` and `[lints.clippy]` levels of a repository-controlled manifest.
 
@@ -252,7 +298,7 @@ def manifest_lints(text):
     """
     levels = {'rust': {}, 'clippy': {}}
     table, root = None, True
-    for number, raw in enumerate(text.splitlines(), 1):
+    for number, raw in top_level_lines(text):
         line = raw.strip()
         if not line or line.startswith('#'):
             continue

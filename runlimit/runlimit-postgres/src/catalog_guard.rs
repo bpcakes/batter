@@ -402,6 +402,7 @@ fn an_alias_is_visible_in_its_block_and_nested_ones() {
         "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u AS b WHERE b.id = a.id)",
         "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u WHERE u.id = a.id)",
         "SELECT t.id FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.id = t.id)",
+        "SELECT s.value FROM pg_catalog.generate_series(1, 3) s(value)",
         "SELECT a.id FROM t AS a UNION SELECT b.id FROM u AS b",
         "SELECT s.n FROM t AS a CROSS JOIN LATERAL (SELECT a.used AS n) AS s",
         "SELECT s.n FROM t AS a, LATERAL (SELECT a.used AS n) AS s",
@@ -620,6 +621,9 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "UPDATE t AS r SET (b) = ROW(1) WHERE pg_catalog.count(*) FILTER (WHERE TRUE) > 0",
         "SELECT pg_catalog.count(*) OVER (ORDER BY 1)",
         "SELECT pg_catalog. count(*), pg_catalog /* x */ . floor(1)",
+        "SELECT s.value FROM pg_catalog.generate_series(1, 3) s(value)",
+        "SELECT s.value FROM pg_catalog.generate_series(1, 3) WITH ORDINALITY s(value, n)",
+        "SELECT s.n FROM (SELECT 1) s(n)",
     ] {
         assert_eq!(
             unqualified(sql),

@@ -257,6 +257,19 @@ class SqlGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inherits'):
             validate_sql_gate(self.tree(inherited))
 
+    def test_brackets_inside_values_open_no_table(self):
+        hidden = (b'package.description = """\n[example]\n"""\n'
+                  b'lints.rust.unfulfilled_lint_expectations = "allow"\n' + self.MANIFEST)
+        with self.assertRaisesRegex(ValueError, 'set lints in'):
+            validate_sql_gate(self.tree(hidden))
+        spanning = self.MANIFEST.replace(
+            b'name = "runlimit-postgres"\n',
+            b'name = "runlimit-postgres"\nmetadata = [\n["[lints.rust]"],\n]\n'
+            b"note = '''\n[lints.clippy]\n'''\nquoted = \"a \\\" [x] # y\"\n")
+        self.assertEqual(manifest_lints(spanning.decode()), manifest_lints(self.MANIFEST.decode()))
+        with self.assertRaisesRegex(ValueError, 'unterminated'):
+            manifest_lints('[package]\nname = "x\n')
+
     def test_check_cfg_inline_tables_read_and_duplicate_spellings_fail(self):
         lints = manifest_lints(self.MANIFEST.decode() + "unexpected_cfgs = "
                                "{ level = \"warn\", check-cfg = ['cfg(probe)'] }\n")

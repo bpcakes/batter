@@ -378,7 +378,18 @@ fn owns_column_list(code: &str, start: usize, ctes: &BTreeSet<usize>) -> bool {
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    COLUMN_LIST_OWNERS.contains(&previous.as_str()) || ctes.contains(&start)
+    // A bare FROM alias's column list follows its item's closing parenthesis
+    // or `WITH ORDINALITY` (`f(1) s(value)`). Only a clause keyword such as
+    // FILTER or OVER follows `)` directly and takes a parenthesis, and those
+    // stay `is_syntax`'s to judge; a call needs an operator or keyword first.
+    let alias = code[start..]
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    COLUMN_LIST_OWNERS.contains(&previous.as_str())
+        || ctes.contains(&start)
+        || (before.ends_with(')') || previous == "ordinality") && !SYNTAX.contains(&alias.as_str())
 }
 
 /// Where each common table expression's name starts: the first after `WITH`

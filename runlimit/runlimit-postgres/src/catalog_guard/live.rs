@@ -76,8 +76,7 @@ async fn postgres_resolves_every_statement_in_its_familys_schema() {
         .expect("the clock is after the epoch")
         .as_nanos();
     let inventory = statements::all();
-    let mut prepared = BTreeSet::new();
-    let mut unresolved = Vec::new();
+    let mut findings = Findings::default();
     for history in History::ALL {
         let schema = format!(
             "runlimit_guard_{history:?}_{}_{started}",
@@ -85,41 +84,89 @@ async fn postgres_resolves_every_statement_in_its_familys_schema() {
         )
         .to_ascii_lowercase();
         administer(&admin, format!("CREATE SCHEMA {schema}")).await;
-        let search_path = format!("{schema}, pg_catalog");
-        let options = PgConnectOptions::from_str(&url)
-            .expect("the test database URL parses")
-            .options([("search_path", search_path.as_str())]);
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .expect("connect inside the empty schema");
-        assert_eq!(
-            current_schemas(&pool).await,
-            [schema.as_str(), "pg_catalog"]
-        );
-        history
-            .migrate(&pool)
-            .await
-            .unwrap_or_else(|error| panic!("{history:?} installs its schema: {error}"));
-        for (name, statement) in &inventory {
-            if History::of(*statement).contains(&history) {
-                if let Err(error) = prepare(&pool, *statement).await {
-                    unresolved.push(format!("{history:?} {name}: {error}"));
-                }
-                prepared.insert(name.clone());
-            }
+        // A setup failure is kept like a preparation failure, so the schema
+        // is dropped before anything is reported.
+        if let Err(failure) = check_history(&url, &schema, history, &inventory, &mut findings).await
+        {
+            findings
+                .failures
+                .push(format!("{history:?} setup: {failure}"));
         }
-        pool.close().await;
         administer(&admin, format!("DROP SCHEMA {schema} CASCADE")).await;
     }
     admin.close().await;
     assert!(
-        unresolved.is_empty(),
-        "statements PostgreSQL cannot resolve:\n{unresolved:#?}"
+        findings.failures.is_empty(),
+        "statements PostgreSQL cannot resolve:\n{:#?}",
+        findings.failures
     );
     let all: BTreeSet<String> = inventory.into_iter().map(|(name, _)| name).collect();
-    assert_eq!(prepared, all, "every statement is prepared in some schema");
+    assert_eq!(
+        findings.prepared, all,
+        "every statement is prepared in some schema"
+    );
+}
+
+/// What the check found: each statement prepared, and each failure.
+#[derive(Default)]
+struct Findings {
+    prepared: BTreeSet<String>,
+    failures: Vec<String>,
+}
+
+/// Connects inside the empty `schema`, checks `history` there, and closes
+/// the connection whatever the check found.
+async fn check_history(
+    url: &str,
+    schema: &str,
+    history: History,
+    inventory: &[(String, Statement)],
+    findings: &mut Findings,
+) -> Result<(), String> {
+    let search_path = format!("{schema}, pg_catalog");
+    let options = PgConnectOptions::from_str(url)
+        .map_err(|error| format!("parse the test database URL: {error}"))?
+        .options([("search_path", search_path.as_str())]);
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|error| format!("connect inside the schema: {error}"))?;
+    let checked = prepare_history(&pool, schema, history, inventory, findings).await;
+    pool.close().await;
+    checked
+}
+
+/// Verifies the search path, migrates `history` and prepares each statement
+/// that runs against it.
+async fn prepare_history(
+    pool: &PgPool,
+    schema: &str,
+    history: History,
+    inventory: &[(String, Statement)],
+    findings: &mut Findings,
+) -> Result<(), String> {
+    let schemas = current_schemas(pool)
+        .await
+        .map_err(|error| format!("read the search path: {error}"))?;
+    if schemas != [schema, "pg_catalog"] {
+        return Err(format!("the connection searches {schemas:?}"));
+    }
+    history
+        .migrate(pool)
+        .await
+        .map_err(|error| format!("install the schema: {error}"))?;
+    for (name, statement) in inventory {
+        if History::of(*statement).contains(&history) {
+            if let Err(error) = prepare(pool, *statement).await {
+                findings
+                    .failures
+                    .push(format!("{history:?} {name}: {error}"));
+            }
+            findings.prepared.insert(name.clone());
+        }
+    }
+    Ok(())
 }
 
 /// Asks PostgreSQL to prepare `statement`, resolving every name in it.
@@ -152,9 +199,8 @@ async fn administer(admin: &PgPool, sql: String) {
     clippy::disallowed_methods,
     reason = "the live check verifies its search path"
 )]
-async fn current_schemas(pool: &PgPool) -> Vec<String> {
+async fn current_schemas(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar("SELECT pg_catalog.current_schemas(false)")
         .fetch_one(pool)
         .await
-        .expect("read the check's search path")
 }

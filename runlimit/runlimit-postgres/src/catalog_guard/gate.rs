@@ -206,11 +206,10 @@ fn exceptions() -> Vec<(&'static str, String)> {
         (
             "catalog_guard/live.rs",
             "#[expect(clippy::disallowed_methods, reason = \"the live check verifies its search path\")]
-             async fn current_schemas(pool: &PgPool) -> Vec<String> {
+             async fn current_schemas(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
                  sqlx::query_scalar(\"SELECT pg_catalog.current_schemas(false)\")
                      .fetch_one(pool)
                      .await
-                     .expect(\"read the check's search path\")
              }"
             .to_owned(),
         ),
