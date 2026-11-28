@@ -97,6 +97,11 @@ fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
     );
     let table_ddl =
         ["create", "alter", "drop"].iter().any(|w| is(tokens, 0, w)) && is(tokens, 1, "table");
+    // A schema-qualified target names a table this reader would misread.
+    assert!(
+        !(table_ddl && punct(tokens, skip_guards(tokens, 2) + 1, '.')),
+        "table DDL with a schema-qualified target, which this reader does not apply"
+    );
     // The tokenizer reads a quoted identifier as a placeholder, so a table
     // change it would misname fails instead.
     assert!(
@@ -128,7 +133,11 @@ fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
             }
         }
     } else if is(tokens, 0, "drop") && is(tokens, 1, "table") {
-        for (start, _) in items(tokens, skip_guards(tokens, 2), tokens.len()) {
+        for (start, end) in items(tokens, skip_guards(tokens, 2), tokens.len()) {
+            assert!(
+                end - start <= 2,
+                "DROP TABLE with a qualified or unreadable target"
+            );
             if let Some(table) = word(tokens, start) {
                 tables.remove(table);
             }
@@ -229,6 +238,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE t (failures BIGINT); ALTER TABLE t DROP COLUMN \"failures\"",
         "CREATE TABLE t (failures BIGINT); DO $$ BEGIN ALTER TABLE t DROP COLUMN failures; END $$;",
         "CREATE TABLE t (failures BIGINT); CALL drop_failures();",
+        "CREATE TABLE t (old BIGINT); ALTER TABLE elsewhere.t DROP COLUMN old;",
+        "CREATE TABLE t (old BIGINT); DROP TABLE elsewhere.t;",
     ] {
         assert!(
             std::panic::catch_unwind(|| super::tables([unreadable])).is_err(),

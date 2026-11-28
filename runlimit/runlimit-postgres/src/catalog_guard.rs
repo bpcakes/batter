@@ -57,6 +57,19 @@ const CATALOG_FUNCTIONS: &[&str] = &[
     "unnest",
 ];
 
+/// A statement the limiters send is a query or a data change, never a
+/// command such as `EXECUTE` that runs SQL this guard cannot see.
+fn command_form(sql: &str) -> Option<String> {
+    let first = detector::strip_comments_and_quotes(sql)
+        .trim_start()
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    (!["select", "with", "insert", "update", "delete"].contains(&first.as_str()))
+        .then(|| format!("a {first:?} command, not a query or data change"))
+}
+
 /// The tables the bundled migrations create, with their columns.
 fn migrated_tables() -> std::collections::BTreeMap<String, BTreeSet<String>> {
     let migrations: Vec<&str> = [
@@ -79,6 +92,7 @@ fn every_statement_qualifies_its_catalog_functions_and_types() {
         violations.extend(
             unqualified(statement.sql())
                 .into_iter()
+                .chain(command_form(statement.sql()))
                 .chain(fields::unresolved(statement.sql(), &tables))
                 .chain(
                     catalog_calls(statement.sql())
@@ -155,6 +169,15 @@ fn only_the_listed_catalog_functions_may_be_called() {
             .collect()
     );
     assert!(!CATALOG_FUNCTIONS.contains(&"query_to_xml"));
+    for indirect in [
+        "EXECUTE cached_check",
+        "CALL run_check()",
+        "PREPARE p AS SELECT 1",
+    ] {
+        assert!(command_form(indirect).is_some(), "{indirect}");
+    }
+    assert_eq!(command_form("-- note\nWITH x AS (SELECT 1) SELECT 1"), None);
+    assert!(command_form("/* SELECT */ EXECUTE cached_check").is_some());
 }
 
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
@@ -203,6 +226,10 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         // An alias after a joined item is still declared.
         "SELECT pg_catalog.row_to_json FROM t JOIN u ON TRUE, t AS pg_catalog",
         "SELECT a.label FROM t LEFT JOIN u ON u.id = t.id, t AS a",
+        // One `:` is an array-slice bound, not a cast.
+        "SELECT x.ids[1:r.f] FROM t AS r, u AS x",
+        // A FROM function needs an alias; its implicit name could shadow.
+        "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[])",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",
@@ -228,6 +255,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
          SELECT changed.id, changed.total FROM changed",
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
+        "SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp())), a.id \
+         FROM t AS a WHERE a.used IS DISTINCT FROM a.id",
         "WITH c AS (SELECT a.used::pg_catalog.text AS used, ARRAY[1, a.id] AS samples, a.id \
          FROM t AS a) SELECT c.used, c.samples, c.id FROM c",
     ] {

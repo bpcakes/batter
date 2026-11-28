@@ -265,6 +265,26 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     }
 }
 
+/// Whether token `index` sits directly inside a call whose syntax uses
+/// `FROM` for an argument: `EXTRACT`, `SUBSTRING`, `TRIM`, `OVERLAY` or
+/// `POSITION`.
+fn in_call_syntax(tokens: &[Token], index: usize) -> bool {
+    let mut depth = 0_usize;
+    for open in (0..index).rev() {
+        match tokens[open] {
+            Token::Punct(')') => depth += 1,
+            Token::Punct('(') if depth == 0 => {
+                return word(tokens, open.wrapping_sub(1)).is_some_and(|w| {
+                    ["extract", "substring", "trim", "overlay", "position"].contains(&w)
+                });
+            }
+            Token::Punct('(') => depth -= 1,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Words that may open a join before `JOIN`.
 const JOIN_WORDS: [&str; 7] = [
     "natural", "inner", "left", "right", "full", "outer", "cross",
@@ -465,8 +485,12 @@ fn declarations<'t>(
         let previous = word(tokens, index.wrapping_sub(1));
         let lists = match word(tokens, index) {
             // `ROWS FROM (...)` is a single FROM item, read by `from_item`;
-            // `USING (...)` is a join's column list.
+            // `USING (...)` is a join's column list; `IS DISTINCT FROM` and
+            // `EXTRACT(field FROM ...)` and its kin hold no FROM list.
             Some("from") if previous == Some("rows") => continue,
+            Some("from") if previous == Some("distinct") || in_call_syntax(tokens, index) => {
+                continue;
+            }
             Some("using") if punct(tokens, index + 1, '(') => continue,
             // A FROM or USING list is walked whole, joins included.
             Some("from" | "using") => true,
@@ -511,6 +535,12 @@ fn declarations<'t>(
                     }
                 };
                 declarations.declare(alias, declared);
+            }
+            // A function's implicit row name could shadow another relation.
+            if item.alias.is_none() && matches!(item.source, ItemSource::Function) {
+                declarations
+                    .problems
+                    .push("a function in FROM without an alias".to_owned());
             }
             match next_from_item(tokens, item.end) {
                 Some(next) if lists => item_start = next,
@@ -634,7 +664,10 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
             found.push(format!("{receiver}.{field} (a field of a qualified name)"));
             continue;
         }
-        if receiver == "pg_catalog" || punct(&tokens, dot.wrapping_sub(2), ':') {
+        // `::schema.type` is a cast; one `:` is an array-slice bound.
+        let cast =
+            punct(&tokens, dot.wrapping_sub(2), ':') && punct(&tokens, dot.wrapping_sub(3), ':');
+        if receiver == "pg_catalog" || cast {
             continue;
         }
         let columns = if receiver == "excluded" {
