@@ -89,6 +89,12 @@ fn skip_guards(tokens: &[Token], mut index: usize) -> usize {
 }
 
 fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
+    // A DO block, procedure call or EXECUTE runs now, with schema effects
+    // this reader cannot see.
+    assert!(
+        !["do", "call", "execute"].iter().any(|w| is(tokens, 0, w)),
+        "a migration statement that runs code whose schema effects are unknown"
+    );
     let table_ddl =
         ["create", "alter", "drop"].iter().any(|w| is(tokens, 0, w)) && is(tokens, 1, "table");
     // The tokenizer reads a quoted identifier as a placeholder, so a table
@@ -221,6 +227,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
     for unreadable in [
         "CREATE TABLE t (id BIGINT); ALTER TABLE t RENAME id",
         "CREATE TABLE t (failures BIGINT); ALTER TABLE t DROP COLUMN \"failures\"",
+        "CREATE TABLE t (failures BIGINT); DO $$ BEGIN ALTER TABLE t DROP COLUMN failures; END $$;",
+        "CREATE TABLE t (failures BIGINT); CALL drop_failures();",
     ] {
         assert!(
             std::panic::catch_unwind(|| super::tables([unreadable])).is_err(),

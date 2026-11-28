@@ -36,9 +36,26 @@ mod detector;
 mod fields;
 mod gate;
 
-use detector::unqualified;
+use detector::{catalog_calls, unqualified};
 
 use crate::statements;
+
+/// The catalog functions the limiters call. Any other is a decision to make
+/// here, not a qualified call to accept: `pg_catalog.query_to_xml`, for one,
+/// runs its text argument as SQL that `statements::all()` never lists.
+const CATALOG_FUNCTIONS: &[&str] = &[
+    "cardinality",
+    "clock_timestamp",
+    "count",
+    "floor",
+    "gen_random_uuid",
+    "generate_series",
+    "min",
+    "pg_advisory_xact_lock",
+    "pg_current_xact_id",
+    "set_config",
+    "unnest",
+];
 
 /// The tables the bundled migrations create, with their columns.
 fn migrated_tables() -> std::collections::BTreeMap<String, BTreeSet<String>> {
@@ -63,6 +80,16 @@ fn every_statement_qualifies_its_catalog_functions_and_types() {
             unqualified(statement.sql())
                 .into_iter()
                 .chain(fields::unresolved(statement.sql(), &tables))
+                .chain(
+                    catalog_calls(statement.sql())
+                        .into_iter()
+                        .filter(|call| !CATALOG_FUNCTIONS.contains(&call.as_str()))
+                        .map(|call| {
+                            format!(
+                                "pg_catalog.{call}(...) is not a catalog function the limiters call"
+                            )
+                        }),
+                )
                 .map(|found| format!("{name}: {found}")),
         );
     }
@@ -114,6 +141,22 @@ fn included_statements_are_exactly_the_sql_files_in_src() {
     );
 }
 
+#[test]
+fn only_the_listed_catalog_functions_may_be_called() {
+    let calls = catalog_calls(
+        "SELECT pg_catalog.query_to_xml($1, true, false, ''), pg_catalog . floor(1), \
+         pg_catalog.text 'x', $2::pg_catalog.text",
+    );
+    assert_eq!(
+        calls,
+        ["floor", "query_to_xml"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
+    );
+    assert!(!CATALOG_FUNCTIONS.contains(&"query_to_xml"));
+}
+
 // `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
 // such column, so a qualified name must be a column of its declared receiver.
 #[test]
@@ -157,6 +200,9 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT pg_catalog.pg_class.row_to_json FROM pg_catalog.pg_class",
         // A parenthesized join hides its first operand's alias.
         "SELECT pg_catalog.row_to_json FROM (t AS pg_catalog CROSS JOIN u AS g)",
+        // An alias after a joined item is still declared.
+        "SELECT pg_catalog.row_to_json FROM t JOIN u ON TRUE, t AS pg_catalog",
+        "SELECT a.label FROM t LEFT JOIN u ON u.id = t.id, t AS a",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",

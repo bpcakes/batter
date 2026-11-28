@@ -231,6 +231,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   names. No column definition list (`AS (v text)`) and no three-part field
   reference. Unreserved keywords such as `materialized` count as grammar only
   in their own clause (`AS [NOT] MATERIALIZED (query)`, `ON CONFLICT (...) DO`).
+  Call only the catalog functions `src/catalog_guard.rs` lists; adding one
+  (never one that runs SQL text, such as `query_to_xml`) is a reviewed
+  change there. Migrations derive the column inventory, so they may not use
+  `DO`, `CALL` or top-level `EXECUTE`.
   A multi-array `unnest` is spelled
   `ROWS FROM (pg_catalog.unnest(a), ...)`, because PostgreSQL only rewrites
   the unqualified spelling. `src/catalog_guard.rs` reads a restricted

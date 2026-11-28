@@ -136,6 +136,30 @@ fn next_word_is(code: &str, start: usize, word: &str) -> bool {
             .is_some_and(is_identifier_part)
 }
 
+/// The catalog functions `sql` calls by their `pg_catalog` name.
+pub(super) fn catalog_calls(sql: &str) -> BTreeSet<String> {
+    let code = strip_comments_and_quotes(sql);
+    let bytes = code.as_bytes();
+    let mut calls = BTreeSet::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !is_identifier_start(bytes[index]) || index > 0 && is_identifier_part(bytes[index - 1]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_identifier_part(bytes[index]) {
+            index += 1;
+        }
+        if bytes.get(skip_spaces(bytes, index)) == Some(&b'(')
+            && qualifier_before(&code, start).as_deref() == Some("pg_catalog")
+        {
+            calls.insert(code[start..index].to_ascii_lowercase());
+        }
+    }
+    calls
+}
+
 /// Unreserved keywords in `SYNTAX`: PostgreSQL also accepts each as a
 /// function name, so `word(` is grammar only in the clause it spells.
 const CONTEXTUAL_SYNTAX: &[&str] = &[

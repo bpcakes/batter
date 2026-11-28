@@ -265,6 +265,65 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     }
 }
 
+/// Words that may open a join before `JOIN`.
+const JOIN_WORDS: [&str; 7] = [
+    "natural", "inner", "left", "right", "full", "outer", "cross",
+];
+
+/// Words that end a join condition and the FROM list holding it.
+const FROM_ENDS: [&str; 13] = [
+    "where",
+    "group",
+    "having",
+    "window",
+    "union",
+    "intersect",
+    "except",
+    "order",
+    "limit",
+    "offset",
+    "fetch",
+    "for",
+    "returning",
+];
+
+/// Where the FROM item after the one ending at `index` starts, past its
+/// join condition and the comma or join words, or `None` after the last.
+fn next_from_item(tokens: &[Token], mut index: usize) -> Option<usize> {
+    if is(tokens, index, "on") && !is(tokens, index + 1, "conflict") {
+        let mut depth = 0_usize;
+        index += 1;
+        while index < tokens.len() {
+            match tokens[index] {
+                Token::Punct('(') => depth += 1,
+                Token::Punct(')') if depth == 0 => return None,
+                Token::Punct(')') => depth -= 1,
+                Token::Punct(',') if depth == 0 => break,
+                _ if depth == 0
+                    && (is(tokens, index, "join")
+                        || JOIN_WORDS
+                            .iter()
+                            .chain(&FROM_ENDS)
+                            .any(|w| is(tokens, index, w))) =>
+                {
+                    break;
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    } else if is(tokens, index, "using") && punct(tokens, index + 1, '(') {
+        index = closing(tokens, index + 1) + 1;
+    }
+    if punct(tokens, index, ',') {
+        return Some(index + 1);
+    }
+    while JOIN_WORDS.iter().any(|w| is(tokens, index, w)) {
+        index += 1;
+    }
+    is(tokens, index, "join").then_some(index + 1)
+}
+
 /// Whether the parenthesis at `open` holds a query, which is its own block.
 fn opens_query(tokens: &[Token], open: usize) -> bool {
     ["select", "with", "values", "insert", "update", "delete"]
@@ -405,10 +464,12 @@ fn declarations<'t>(
         }
         let previous = word(tokens, index.wrapping_sub(1));
         let lists = match word(tokens, index) {
-            // `ROWS FROM (...)` is a single FROM item, read by `from_item`.
+            // `ROWS FROM (...)` is a single FROM item, read by `from_item`;
+            // `USING (...)` is a join's column list.
             Some("from") if previous == Some("rows") => continue,
+            Some("using") if punct(tokens, index + 1, '(') => continue,
+            // A FROM or USING list is walked whole, joins included.
             Some("from" | "using") => true,
-            Some("join") => false,
             Some("update") if !matches!(previous, Some("for" | "do")) => false,
             Some("into") if previous == Some("insert") => {
                 if let (Some(target), true, Some(alias)) = (
@@ -451,10 +512,10 @@ fn declarations<'t>(
                 };
                 declarations.declare(alias, declared);
             }
-            if !(lists && punct(tokens, item.end, ',')) {
-                break;
+            match next_from_item(tokens, item.end) {
+                Some(next) if lists => item_start = next,
+                _ => break,
             }
-            item_start = item.end + 1;
         }
     }
     declarations
