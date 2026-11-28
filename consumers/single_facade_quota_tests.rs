@@ -13,9 +13,10 @@ use std::time::Duration;
 
 // Run every failure through both application expectations, not only the first.
 fn expectations() -> [fn(QuotaOutcome) -> Outcome; 2] {
-    [expect_admission, |result| {
-        expect_exhaustion(result).map(|_| ())
-    }]
+    [
+        |result| expect_admission(result).map(|_| ()),
+        |result| expect_exhaustion(result).map(|_| ()),
+    ]
 }
 
 #[test]
@@ -93,6 +94,23 @@ fn interrupted_admitted_work_keeps_its_admission_evidence() {
         };
         assert_eq!(*actual, denial);
     }
+}
+
+// The response metadata encodes the admitted allowance, so a shadow denial,
+// which carries none, is not the admission the consumer expects.
+#[test]
+fn a_shadow_denied_admission_has_no_allowance_to_encode() {
+    let denial = QuotaDenial::new(Capacity::new(1).unwrap(), Duration::from_secs(17));
+    let failure = expect_admission(RunResult::Admitted {
+        admission: Admission::ShadowDenied {
+            index: 0,
+            batch_size: 1.try_into().unwrap(),
+            denial,
+        },
+        work: Ok(()),
+    })
+    .unwrap_err();
+    assert!(failure.downcast_ref::<UnexpectedQuotaOutcome>().is_some());
 }
 
 #[tokio::test]
