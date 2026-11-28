@@ -108,8 +108,15 @@ impl MigrationCode {
     /// or trigger (in DML, an index, a default or a check), or DML on a
     /// table a defined trigger fires on.
     fn check(&self, tokens: &[Token]) {
-        let Some(kind) = word(tokens, 0) else {
+        if tokens.is_empty() {
             return;
+        }
+        // A statement opening with punctuation, such as `(SELECT ...)`, is
+        // one this reader cannot classify.
+        let Some(kind) = word(tokens, 0) else {
+            panic!(
+                "a migration statement that opens with punctuation, which this reader cannot read"
+            );
         };
         assert!(
             STATEMENT_KINDS.contains(&kind),
@@ -118,21 +125,32 @@ impl MigrationCode {
         let defines = defined_function(tokens).is_some()
             || is(tokens, 0, "create") && is(tokens, 1, "trigger");
         if !defines {
+            // A name after FUNCTION, PROCEDURE or ROUTINE is a signature, as
+            // in DROP FUNCTION f(), not a call.
             let calls = (0..tokens.len()).find(|&index| {
                 word(tokens, index).is_some_and(|name| self.functions.contains(name))
                     && punct(tokens, index + 1, '(')
+                    && !["function", "procedure", "routine"]
+                        .iter()
+                        .any(|w| is(tokens, index.wrapping_sub(1), w))
             });
             assert!(
                 calls.is_none(),
                 "a migration statement that calls a function the migrations define"
             );
         }
-        let target = match kind {
-            "insert" if is(tokens, 1, "into") => word(tokens, 2),
-            "update" => word(tokens, skip_guards(tokens, 1)),
-            "delete" if is(tokens, 1, "from") => word(tokens, skip_guards(tokens, 2)),
+        let target_at = match kind {
+            "insert" if is(tokens, 1, "into") => Some(2),
+            "update" => Some(skip_guards(tokens, 1)),
+            "delete" if is(tokens, 1, "from") => Some(skip_guards(tokens, 2)),
             _ => None,
         };
+        // A qualified target's table, not its schema, is what a trigger fires on.
+        assert!(
+            !target_at.is_some_and(|at| punct(tokens, at + 1, '.')),
+            "migration DML on a schema-qualified table, which this reader does not resolve"
+        );
+        let target = target_at.and_then(|at| word(tokens, at));
         let fires = target
             .and_then(|table| self.triggers.get(table))
             .is_some_and(|triggers| !triggers.is_empty());
@@ -385,7 +403,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE seeded (n BIGINT); INSERT INTO seeded (n) VALUES (1); \
          CREATE FUNCTION count_seeds() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE TRIGGER counted AFTER INSERT ON seeded FOR EACH ROW EXECUTE FUNCTION count_seeds(); \
-         DROP TRIGGER counted ON seeded; INSERT INTO seeded (n) VALUES (2);",
+         DROP TRIGGER counted ON seeded; INSERT INTO seeded (n) VALUES (2); \
+         DROP FUNCTION count_seeds();",
         // A function body's DDL runs when the function is called.
         "CREATE FUNCTION f() RETURNS void AS $body$ SELECT 1; ALTER TABLE counters DROP COLUMN id; $body$ \
          LANGUAGE sql; -- $$ is no body here
@@ -430,6 +449,13 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
          ALTER TABLE t RENAME TO u; INSERT INTO u (old) VALUES (1);",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION drop_old() RETURNS void AS $$ ALTER TABLE t DROP COLUMN old $$ LANGUAGE sql; \
+         (SELECT drop_old());",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
+         INSERT INTO public.t (old) VALUES (1);",
         "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
         "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {

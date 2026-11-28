@@ -187,6 +187,8 @@ fn output_names(tokens: &[Token], start: usize, end: usize) -> Option<BTreeSet<S
                 [.., Token::Word(keyword), Token::Word(alias)] if keyword == "as" => {
                     Some(alias.clone())
                 }
+                // A literal word names no column: PostgreSQL calls it ?column?.
+                [Token::Word(name)] if ["true", "false", "null"].contains(&name.as_str()) => None,
                 [Token::Word(name)] | [Token::Word(_), Token::Punct('.'), Token::Word(name)] => {
                     Some(name.clone())
                 }
@@ -207,6 +209,18 @@ fn top_level_word(tokens: &[Token], start: usize, end: usize, words: &[&str]) ->
         }
         depth == 0 && words.iter().any(|w| is(tokens, index, w))
     })
+}
+
+/// Whether the `WITH` at `index` is part of a type or a FROM item rather
+/// than a CTE list: `... WITH TIME ZONE`, or `f(...) WITH ORDINALITY` that is
+/// not a CTE named `ordinality` (`WITH ordinality AS (` or `(columns)`).
+fn is_with_modifier(tokens: &[Token], index: usize) -> bool {
+    let time_zone = is(tokens, index + 1, "time") && is(tokens, index + 2, "zone");
+    let ordinality = punct(tokens, index.wrapping_sub(1), ')')
+        && is(tokens, index + 1, "ordinality")
+        && !punct(tokens, index + 2, '(')
+        && !(is(tokens, index + 2, "as") && punct(tokens, index + 3, '('));
+    time_zone || ordinality
 }
 
 /// The names a statement declares, and the problems declaring them.
@@ -271,7 +285,7 @@ fn declarations<'t>(
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
-        if is(tokens, index, "with") && !is(tokens, index + 1, "ordinality") {
+        if is(tokens, index, "with") && !is_with_modifier(tokens, index) {
             declare_ctes(&mut declarations, tokens, index + 1);
         }
         let previous = word(tokens, index.wrapping_sub(1));
@@ -477,11 +491,7 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
         // A CTE is visible only in its own query, so a WITH that is not the
         // statement's own could shadow a relation elsewhere; RETURNING WITH
         // names OLD and NEW rows this scan does not read.
-        if is(&tokens, index, "with")
-            && index > 0
-            && !is(&tokens, index + 1, "ordinality")
-            && !is(&tokens, index + 1, "time")
-        {
+        if is(&tokens, index, "with") && index > 0 && !is_with_modifier(&tokens, index) {
             found.push("a WITH clause that is not the statement's own".to_owned());
         }
         if is(&tokens, index, "returning") && is(&tokens, index + 1, "with") {

@@ -240,6 +240,11 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         // Without RECURSIVE, a CTE's body sees only the CTEs before it.
         "WITH a AS (SELECT b.n FROM b), b(n) AS (SELECT 1) SELECT n FROM a",
         "WITH a(n) AS (SELECT a.n FROM a) SELECT n FROM a",
+        // A literal word names no column.
+        "WITH c AS (SELECT TRUE, NULL) SELECT c.true, c.null FROM c",
+        // A nested CTE is rejected whatever it is called.
+        "SELECT a.extra FROM u AS a WHERE EXISTS (WITH time AS (SELECT 1 AS extra) SELECT 1 FROM time)",
+        "SELECT a.extra FROM u AS a WHERE EXISTS (WITH ordinality AS (SELECT 1 AS extra) SELECT 1 FROM ordinality)",
         // A nested WITH's CTE is visible only inside its query.
         "SELECT a.extra FROM u AS a WHERE EXISTS (WITH u AS (SELECT 1 AS extra) SELECT 1 FROM u)",
         // A schema-qualified source is no CTE of the same name.
@@ -278,6 +283,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT a.id FROM t AS a FOR NO KEY UPDATE OF a",
         "WITH b(n) AS (SELECT 1), a AS (SELECT b.n FROM b) SELECT a.n FROM a",
         "WITH RECURSIVE a(n) AS (SELECT 1 UNION ALL SELECT a.n FROM a) SELECT a.n FROM a",
+        "SELECT s.v, s.ordinality FROM pg_catalog.unnest($1::BIGINT[]) WITH ORDINALITY AS s(v, ordinality) \
+         WHERE $2::timestamp with time zone IS NOT NULL",
         "SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp())), a.id \
          FROM t AS a WHERE a.used IS DISTINCT FROM a.id",
         "WITH c AS (SELECT a.used::pg_catalog.text AS used, ARRAY[1, a.id] AS samples, a.id \
