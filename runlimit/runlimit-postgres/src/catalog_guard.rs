@@ -600,6 +600,14 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
+    // A vertical tab or form feed separates tokens for PostgreSQL alone.
+    for sql in ["SELECT floor\u{b}(1)", "SELECT pg_catalog.floor(1)\u{c}"] {
+        assert_eq!(
+            unqualified(sql),
+            ["a control character outside a comment or string"],
+            "{sql:?}"
+        );
+    }
     // Only a parsed FROM alias owns a column list; another `) word(` calls.
     for sql in [
         "SELECT DISTINCT ON (capacity_shard) floor(used) FROM runlimit_fixed_windows",

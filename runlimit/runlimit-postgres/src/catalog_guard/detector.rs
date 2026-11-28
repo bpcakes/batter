@@ -281,6 +281,22 @@ fn qualifier_before(code: &str, start: usize) -> Option<String> {
     Some(code[begin..end].to_ascii_lowercase())
 }
 
+/// What a byte outside a comment or string spells that this reader cannot
+/// read. PostgreSQL accepts non-ASCII letters in unquoted identifiers, which
+/// this reader does not tokenize, so each such character counts once, at its
+/// first byte. It also separates tokens with a vertical tab or a form feed,
+/// so only the whitespace both readers agree on (space, tab, line feed and
+/// carriage return) is code.
+fn unreadable(byte: u8) -> Option<&'static str> {
+    if byte >= 0x80 {
+        (byte & 0xC0 != 0x80).then_some("a non-ASCII character outside a comment or string")
+    } else if byte.is_ascii_control() && !matches!(byte, b'\t' | b'\n' | b'\r') {
+        Some("a control character outside a comment or string")
+    } else {
+        None
+    }
+}
+
 /// The constructs operational SQL leaves out so that this detector reads it
 /// completely: dollar quoting, quoted identifiers, `CAST(...)` (casts use
 /// `::`) and a string constant anywhere but directly after `(` or `,`, which
@@ -349,15 +365,12 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                     found.push("CAST(...) instead of ::".to_owned());
                 }
             }
-            // PostgreSQL accepts non-ASCII letters in unquoted identifiers,
-            // which this reader does not tokenize; count each character once.
-            byte if byte >= 0x80 => {
-                if byte & 0xC0 != 0x80 {
-                    found.push("a non-ASCII character outside a comment or string".to_owned());
+            byte => {
+                if let Some(problem) = unreadable(byte) {
+                    found.push(problem.to_owned());
                 }
                 index += 1;
             }
-            _ => index += 1,
         }
         // Comments and whitespace leave `previous` where it was.
         let comment = bytes[token] == b'-' && bytes.get(token + 1) == Some(&b'-')

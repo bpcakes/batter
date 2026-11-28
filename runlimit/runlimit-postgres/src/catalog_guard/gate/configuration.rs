@@ -125,18 +125,29 @@ fn attribute_spans(code: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// Whether the word at `at` sits in a `use` item, which could import a
+/// Whether the word at `at` sits in a `use` item that could import a
 /// configuration macro under another name. A use tree holds no `;`, so the
 /// item runs from its `use` keyword to the next one, groups such as
 /// `use core::{cfg_select as pick, fmt};` included; `use<..>` is precise
-/// capturing in a signature, not an import.
+/// capturing in a signature, not an import. An import from the crate itself
+/// (`use crate::cfg_for_pool;`) selects nothing, since a crate macro that
+/// wraps a configuration macro is caught where it invokes it; any other
+/// root, a leading group included, counts.
 fn in_use_item(code: &str, at: usize) -> bool {
     code.match_indices("use").any(|(start, _)| {
         let after = &code[start + "use".len()..];
         let keyword = !code[..start].chars().next_back().is_some_and(is_identifier)
             && !after.chars().next().is_some_and(is_identifier)
             && !after.starts_with('<');
-        keyword && start < at && code[start..].find(';').is_some_and(|end| at < start + end)
+        let root = after
+            .trim_start_matches([' ', ':'])
+            .split(|character: char| !is_identifier(character))
+            .next()
+            .unwrap_or_default();
+        keyword
+            && start < at
+            && code[start..].find(';').is_some_and(|end| at < start + end)
+            && !["crate", "self", "super"].contains(&root)
     })
 }
 
@@ -281,6 +292,7 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
         "use core::cfg_select as pick; pick! { test => {} _ => {} }",
         "use core::{cfg_select as pick, fmt}; pick! { test => {} _ => {} }",
         "use core::{fmt, macros::{cfg_select}};",
+        "use {core::cfg_select as pick};",
     ] {
         assert_eq!(
             configuration_predicates(&normalize(imported)),
@@ -290,7 +302,8 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
     }
     let ordinary = normalize(
         "fn cfg_for_pool() {} fn b() { let cfg = 1; cfg_for_pool(); }
-         fn c() -> impl Sized + use<> { let cfg_x = 1; cfg_x }",
+         fn c() -> impl Sized + use<> { let cfg_x = 1; cfg_x }
+         use crate::cfg_for_pool; use self::cfg_for_pool as helper; use super::{cfg_for_pool};",
     );
     assert_eq!(configuration_predicates(&ordinary), Vec::<String>::new());
 }
