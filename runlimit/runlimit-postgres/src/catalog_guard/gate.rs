@@ -537,7 +537,22 @@ const TEST_HELPERS: [(&str, usize); 5] = [
 
 /// Whether normalized `code` compiles anything conditionally.
 fn conditional(code: &str) -> bool {
-    has_token(code, "cfg") || has_token(code, "cfg_attr")
+    configuration_words(code).next().is_some()
+}
+
+/// Each identifier in normalized `code` that begins with `cfg`: `cfg` and
+/// `cfg_attr`, and any other spelling that selects code by configuration,
+/// such as `cfg_select!`, which the configuration checks reject outright.
+fn configuration_words(code: &str) -> impl Iterator<Item = (usize, &str)> {
+    code.match_indices("cfg").filter_map(|(at, _)| {
+        if code[..at].chars().next_back().is_some_and(is_identifier) {
+            return None;
+        }
+        let end = code[at..]
+            .find(|character: char| !is_identifier(character))
+            .map_or(code.len(), |length| at + length);
+        Some((at, &code[at..end]))
+    })
 }
 
 // The statement guard reads the test build's statements, so every build
@@ -581,25 +596,32 @@ fn every_build_compiles_the_same_statements() {
         "macro_rules!pick{()=>{#[cfg(not(test))]statements!{A=\"y\";}};}pick!();",
         "#[cfg_attr(test,doc=\"x\")]mod inner{}",
         "const B:bool=cfg!(test);",
+        "cfg_select!{test=>{statements!{A=\"x\";}}_=>{statements!{A=\"y\";}}}",
     ] {
         assert!(conditional(&normalize(family)), "{family}");
     }
 }
 
+/// The one item the macro probes' flag may compile.
+const PROBE_MODULE: &str = "#[cfg(runlimit_macro_probes)] mod macro_probes;";
+
 /// The configuration predicates of each `cfg(...)`, `cfg!(...)` and
-/// `cfg_attr(...)` in normalized `code`.
+/// `cfg_attr(...)` in normalized `code`. Any other configuration word, or
+/// one this reader cannot follow, yields itself, which no check accepts.
 fn configuration_predicates(code: &str) -> Vec<String> {
     let mut found = Vec::new();
-    for (at, _) in code.match_indices("cfg") {
-        if code[..at].chars().next_back().is_some_and(is_identifier) {
-            continue;
-        }
-        let rest = &code[at + "cfg".len()..];
-        let (attribute, arguments) = if let Some(arguments) = rest.strip_prefix("_attr(") {
-            (true, arguments)
-        } else if let Some(arguments) = rest.strip_prefix("!(").or_else(|| rest.strip_prefix('(')) {
-            (false, arguments)
-        } else {
+    for (at, word) in configuration_words(code) {
+        let rest = &code[at + word.len()..];
+        let arguments = match word {
+            "cfg_attr" => rest.strip_prefix('(').map(|arguments| (true, arguments)),
+            "cfg" => rest
+                .strip_prefix("!(")
+                .or_else(|| rest.strip_prefix('('))
+                .map(|arguments| (false, arguments)),
+            _ => None,
+        };
+        let Some((attribute, arguments)) = arguments else {
+            found.push(word.to_owned());
             continue;
         };
         let mut depth = 1_usize;
@@ -644,14 +666,13 @@ fn predicate_parts(list: &str) -> Vec<&str> {
 }
 
 /// Whether the Clippy runs set normalized `predicate` both ways: `test`
-/// through `--all-targets`, the crate's one optional feature through the
-/// default and all-features runs, and the macro probes' own configuration,
-/// joined by `not`, `all` and `any`. A release-only, platform-only or other
-/// branch would compile code no run lints.
+/// through `--all-targets` and the crate's one optional feature through the
+/// default and all-features runs, joined by `not`, `all` and `any`. A
+/// release-only, platform-only or other branch would compile code no run
+/// lints. The macro probes' flag is no such predicate: its one declaration
+/// is pinned by [`PROBE_MODULE`].
 fn linted(predicate: &str) -> bool {
-    if ["test", "runlimit_macro_probes"].contains(&predicate)
-        || predicate == normalize("feature = \"serde\"")
-    {
+    if predicate == "test" || predicate == normalize("feature = \"serde\"") {
         return true;
     }
     ["not(", "all(", "any("].iter().any(|combinator| {
@@ -669,7 +690,16 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
     let source = manifest_directory().join("src");
     let mut problems = Vec::new();
     for (file, path) in rust_files(&source) {
-        let code = normalize(&fs::read_to_string(&path).expect("source is readable"));
+        let mut code = normalize(&fs::read_to_string(&path).expect("source is readable"));
+        // The probe run caps every lint and reads only the probes' reports,
+        // so its flag compiles that one module and nothing else.
+        if file == "catalog_guard/gate.rs" {
+            let probe_module = normalize(PROBE_MODULE);
+            if code.matches(&probe_module).count() != 1 {
+                problems.push(format!("{file}: `{PROBE_MODULE}` is not declared once"));
+            }
+            code = code.replace(&probe_module, "");
+        }
         for predicate in configuration_predicates(&code) {
             if !linted(&predicate) {
                 problems.push(format!(
@@ -696,9 +726,14 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
         "unix",
         "target_os = \"macos\"",
         "any(test, panic = \"abort\")",
+        "runlimit_macro_probes",
+        "all(runlimit_macro_probes, feature = \"serde\")",
     ] {
         assert!(!linted(&normalize(unlinted)), "{unlinted}");
     }
+    let selected = normalize("cfg_select! { test => { const A: u8 = 1; } _ => {} }");
+    assert_eq!(configuration_predicates(&selected), ["cfg_select"]);
+    assert!(conditional(&selected));
 }
 
 #[test]

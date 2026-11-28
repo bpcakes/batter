@@ -220,8 +220,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   `scripts/check_runlimit_workspace.py` requires each query macro to be
   reported there; it also keeps the manifest from lowering those lints.
   The gate holds only for compiled code, so the crate compiles conditionally
-  only on `test`, its `serde` feature and `runlimit_macro_probes`, which
-  the Clippy runs set both ways; `gate.rs` rejects any other `cfg`. Integration tests may use raw SQL
+  only on `test` and its `serde` feature, which the Clippy runs set both
+  ways, besides the one pinned `runlimit_macro_probes` module declaration;
+  `gate.rs` rejects any other `cfg` and other configuration macros such as
+  `cfg_select!`. Integration tests may use raw SQL
   behind their crate-level allow. Each statement calls catalog functions and
   casts to non-keyword types (`text`, `bytea`) by their `pg_catalog` names,
   and `double precision` keeps both words. A qualified name `x.f` must be a
