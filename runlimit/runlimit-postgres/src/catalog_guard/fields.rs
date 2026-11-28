@@ -110,8 +110,13 @@ fn opening(tokens: &[Token], close: usize) -> Option<usize> {
 /// Whether the word at `index` is a name whatever it spells: a field after
 /// `.` or a label after `AS`, where PostgreSQL accepts every keyword
 /// (`k.limit`, `SELECT 1 AS from`). Such a word never bounds a clause.
+///
+/// The `AS` must itself be the keyword: in `SELECT 1 AS as FROM t` the
+/// second `as` is the label, and the `FROM` after it is a keyword again.
 fn is_name(tokens: &[Token], index: usize) -> bool {
-    index > 0 && (punct(tokens, index - 1, '.') || is(tokens, index - 1, "as"))
+    index > 0
+        && (punct(tokens, index - 1, '.')
+            || is(tokens, index - 1, "as") && !is_name(tokens, index - 1))
 }
 
 /// The longest identifier PostgreSQL keeps whole; a longer one is truncated
@@ -318,6 +323,9 @@ struct Declarations<'t> {
     /// The `FROM` of each `ROWS FROM` a FROM-list walk read as one item, so
     /// the scan does not take it for a FROM clause of its own.
     rows_from: BTreeSet<usize>,
+    /// The tables and CTEs that appear unaliased, whose own names a field
+    /// may qualify; an alias hides the name it stands for.
+    visible: BTreeSet<String>,
     problems: Vec<String>,
 }
 
@@ -332,6 +340,18 @@ impl Declarations<'_> {
         }
         if self.names.insert(name.to_owned(), declared).is_some() {
             self.problems.push(format!("{name} is declared twice"));
+        }
+    }
+
+    /// The columns of the receiver `name`: an alias, or a table or CTE that
+    /// appears unaliased in the statement. `FROM t AS a` hides `t`, so
+    /// PostgreSQL rejects `t.id` there however `t` is defined.
+    fn receiver_columns(&self, name: &str) -> Option<BTreeSet<String>> {
+        let alias = self.names.contains_key(name) && !self.ctes.contains(name);
+        if alias || self.visible.contains(name) {
+            self.columns(name, 0)
+        } else {
+            None
         }
     }
 
@@ -367,6 +387,7 @@ fn declarations<'t>(
         cte_bodies: Vec::new(),
         recursive: false,
         rows_from: BTreeSet::new(),
+        visible: BTreeSet::new(),
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -410,12 +431,19 @@ fn declarations<'t>(
                         .problems
                         .push("an INSERT target the guard cannot read".to_owned()),
                 }
-                if let (Some(target), true, Some(alias)) = (
+                match (
                     word(tokens, index + 1),
                     is(tokens, index + 2, "as"),
                     word(tokens, index + 3),
                 ) {
-                    declarations.declare(alias, Declared::Target(target.to_owned()));
+                    (Some(target), true, Some(alias)) => {
+                        declarations.declare(alias, Declared::Target(target.to_owned()));
+                    }
+                    // INSERT takes an alias only after AS.
+                    (Some(target), false, _) => {
+                        declarations.visible.insert(target.to_owned());
+                    }
+                    _ => {}
                 }
                 continue;
             }
@@ -505,12 +533,16 @@ fn record_from_item(
         _ => {}
     }
     let Some(alias) = &item.alias else {
-        // A function's implicit row name could shadow another relation.
-        if matches!(item.source, ItemSource::Function) {
-            problem(
+        match &item.source {
+            ItemSource::Relation(name) => {
+                declarations.visible.insert(name.clone());
+            }
+            // A function's implicit row name could shadow another relation.
+            ItemSource::Function => problem(
                 declarations,
                 "a function in FROM without an alias".to_owned(),
-            );
+            ),
+            _ => {}
         }
         return;
     };
@@ -730,7 +762,7 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
                 .filter(|(clause, _)| clause.contains(&dot))
                 .map(|(_, columns)| columns.clone())
         } else {
-            declarations.columns(receiver, 0)
+            declarations.receiver_columns(receiver)
         };
         match columns {
             None => found.push(format!(

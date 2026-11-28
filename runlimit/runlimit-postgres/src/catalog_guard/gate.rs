@@ -479,6 +479,88 @@ fn only_the_pinned_items_suppress_the_gate() {
     assert!(problems.is_empty(), "{problems:#?}");
 }
 
+/// Normalized `code` without its `macro_rules!` definitions, each up to the
+/// delimiter closing its body. A definition without one keeps the rest.
+fn without_macro_definitions(code: &str) -> String {
+    let mut kept = String::new();
+    let mut rest = code;
+    while let Some(at) = rest.find("macro_rules!") {
+        kept.push_str(&rest[..at]);
+        let definition = &rest[at..];
+        let Some(open) = definition.find(['{', '(', '[']) else {
+            rest = definition;
+            break;
+        };
+        let mut depth = 0_usize;
+        let close = definition[open..]
+            .char_indices()
+            .find_map(|(index, character)| {
+                match character {
+                    '{' | '(' | '[' => depth += 1,
+                    '}' | ')' | ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(open + index + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            });
+        let Some(close) = close else {
+            rest = definition;
+            break;
+        };
+        rest = &definition[close..];
+    }
+    kept.push_str(rest);
+    kept
+}
+
+// The statement guard reads the test build's statements, so every build
+// must compile the same ones: a family's file holds no conditional
+// compilation, statements.rs holds it only inside its macro definitions,
+// whose `cfg(test)` items are test helpers, and lib.rs declares the module
+// unconditionally.
+#[test]
+fn every_build_compiles_the_same_statements() {
+    let conditional = |code: &str| has_token(code, "cfg") || has_token(code, "cfg_attr");
+    let source = manifest_directory().join("src");
+    let mut problems = Vec::new();
+    for (file, path) in rust_files(&source) {
+        if file != "statements.rs" && !file.starts_with("statements/") {
+            continue;
+        }
+        let code = normalize(&fs::read_to_string(&path).expect("source is readable"));
+        if conditional(&without_macro_definitions(&code)) {
+            problems.push(format!("{file}: compiles statements conditionally"));
+        }
+    }
+    let root = normalize(&fs::read_to_string(source.join("lib.rs")).expect("lib.rs"));
+    let declaration = root
+        .find("mod statements;")
+        .expect("lib.rs declares statements");
+    let item_start = root[..declaration].rfind([';', '}']).map_or(0, |at| at + 1);
+    if conditional(&root[item_start..declaration]) {
+        problems.push("lib.rs: declares statements conditionally".to_owned());
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert_eq!(
+        without_macro_definitions("a;macro_rules!m{(x)=>{#[cfg(test)]fn f(){}};}b;"),
+        "a;b;"
+    );
+    for family in [
+        "#[cfg(test)]statements!{A=\"x\";}",
+        "#[cfg_attr(test,doc=\"x\")]mod inner{}",
+        "const B:bool=cfg!(test);",
+    ] {
+        assert!(
+            conditional(&without_macro_definitions(&normalize(family))),
+            "{family}"
+        );
+    }
+}
+
 #[test]
 fn the_suppression_scan_reads_each_lint_list() {
     let code = normalize(

@@ -287,6 +287,9 @@ fn a_keyword_used_as_a_name_is_a_name() {
         "SELECT 1 delete FROM t, elsewhere",
         "SELECT (1) delete FROM t, elsewhere",
         "SELECT 1 AS update FROM t, elsewhere",
+        // A label spelled as leaves the AS keyword before it a keyword.
+        "SELECT 1 AS as FROM elsewhere",
+        "SELECT 1 AS as FROM t, elsewhere",
         // A column named rows before FROM opens no ROWS FROM item.
         "SELECT 1, rows FROM (SELECT 2 AS rows) AS s, elsewhere",
         // Stacked join qualifications all end before the next item.
@@ -319,6 +322,9 @@ fn a_keyword_used_as_a_name_is_a_name() {
         "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id",
         "SELECT a.id FROM t AS a JOIN u AS b JOIN u AS c USING (id) ON TRUE, u AS d",
         "SELECT s.rows FROM (SELECT 2 AS rows) AS s, t",
+        "SELECT 1 AS as FROM t",
+        "INSERT INTO t (id) VALUES (1) RETURNING t.id",
+        "UPDATE t SET used = t.used + 1 RETURNING t.used",
         "WITH k AS (SELECT 1 AS limit) SELECT a.id FROM t AS a JOIN k ON k.limit = a.id",
         "WITH k AS (SELECT 1 AS from, 2 AS n) SELECT k.from, k.n FROM k",
         "WITH k AS (SELECT 1 AS limit), c AS (SELECT k.limit, 2 AS n FROM k) SELECT c.limit, c.n FROM c",
@@ -372,6 +378,12 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT a.row_to_json AS row_to_json FROM t AS a",
         "SELECT a.label FROM t AS a JOIN u AS b ON TRUE",
         "SELECT missing.id FROM t",
+        // An alias hides the name it stands for.
+        "SELECT t.id FROM t AS a",
+        "SELECT t.used FROM t AS a, u",
+        "WITH c AS (SELECT 1 AS id) SELECT c.id FROM c AS x",
+        "INSERT INTO t AS x (id) VALUES (1) RETURNING t.id",
+        "UPDATE t AS x SET used = 1 RETURNING t.used",
         "SELECT (a).row_to_json FROM t AS a",
         // Only a bare column reference or an `AS` item names a column.
         "WITH c AS (SELECT * FROM t) SELECT c.id FROM c",
