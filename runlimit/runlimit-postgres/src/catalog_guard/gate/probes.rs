@@ -482,13 +482,20 @@ fn advisory_lock_guard(guard: sqlx::postgres::PgAdvisoryLockGuard<PgConnection>)
 
 // The workspace build enables sqlx's `any` feature through
 // runledger-postgres, and the test build here through a dev-dependency, so
-// the PostgreSQL driver's database management is reachable through it.
-#[expect(clippy::disallowed_methods, reason = "probe")]
-fn any_driver_migrate_database() {
-    if let Ok(database) = sqlx::postgres::any::DRIVER.get_migrate_database() {
-        let _ = database.create_database("probe");
-        let _ = database.database_exists("probe");
-        let _ = database.drop_database("probe");
-        let _ = database.force_drop_database("probe");
-    }
+// the PostgreSQL driver's database management is reachable through it. Each
+// call has its own expectation: the entries allow paths some builds lack, so
+// only a diagnostic per call shows each one still resolves.
+fn any_driver_database_management() {
+    #[expect(clippy::disallowed_methods, reason = "probe")]
+    let Ok(database) = sqlx::postgres::any::DRIVER.get_migrate_database() else {
+        return;
+    };
+    #[expect(clippy::disallowed_methods, reason = "probe")]
+    let _ = database.create_database("probe");
+    #[expect(clippy::disallowed_methods, reason = "probe")]
+    let _ = database.database_exists("probe");
+    #[expect(clippy::disallowed_methods, reason = "probe")]
+    let _ = database.drop_database("probe");
+    #[expect(clippy::disallowed_methods, reason = "probe")]
+    let _ = database.force_drop_database("probe");
 }
