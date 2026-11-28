@@ -283,6 +283,7 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
         "SELECT a.id FROM t AS a FOR NO KEY UPDATE OF a",
+        "SELECT a.id FROM t AS a JOIN u AS b ON ARRAY[a.id, b.id] = $1, u AS c WHERE c.id = a.id",
         "WITH b(n) AS (SELECT 1), a AS (SELECT b.n FROM b) SELECT a.n FROM a",
         "WITH RECURSIVE a(n) AS (SELECT 1 UNION ALL SELECT a.n FROM a) SELECT a.n FROM a",
         "SELECT s.v, s.ordinality FROM pg_catalog.unnest($1::BIGINT[]) WITH ORDINALITY AS s(v, ordinality) \

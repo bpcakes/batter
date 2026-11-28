@@ -207,9 +207,9 @@ pub(super) fn next_from_item(tokens: &[Token], mut index: usize) -> Option<usize
         index += 1;
         while index < tokens.len() {
             match tokens[index] {
-                Token::Punct('(') => depth += 1,
+                Token::Punct('(' | '[') => depth += 1,
                 Token::Punct(')') if depth == 0 => return None,
-                Token::Punct(')') => depth -= 1,
+                Token::Punct(')' | ']') => depth = depth.saturating_sub(1),
                 Token::Punct(',') if depth == 0 => break,
                 _ if depth == 0
                     && (is(tokens, index, "join")

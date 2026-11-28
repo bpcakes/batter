@@ -46,8 +46,9 @@ pub(in crate::catalog_guard) fn tables<'a>(
 }
 
 /// The code the migrations have defined so far, in migration order, whose
-/// bodies this reader does not read: their functions, and the triggers on
-/// each table.
+/// bodies this reader does not read: every function name they have defined,
+/// kept through DROP FUNCTION because another overload of the name may
+/// survive it, and the triggers on each table.
 #[derive(Default)]
 struct MigrationCode {
     functions: BTreeSet<String>,
@@ -78,10 +79,6 @@ impl MigrationCode {
                 && let Some(triggers) = self.triggers.get_mut(&table)
             {
                 triggers.remove(name);
-            }
-        } else if is(tokens, 0, "drop") && is(tokens, 1, "function") {
-            if let Some(name) = word(tokens, skip_guards(tokens, 2)) {
-                self.functions.remove(name);
             }
         } else if is(tokens, 0, "drop") && is(tokens, 1, "table") {
             for (start, _) in items(tokens, skip_guards(tokens, 2), tokens.len()) {
@@ -176,6 +173,11 @@ fn trigger_name(tokens: &[Token]) -> Option<usize> {
 /// The table a `CREATE TRIGGER` or `DROP TRIGGER` statement names after `ON`.
 fn trigger_table(tokens: &[Token]) -> Option<String> {
     let on = (2..tokens.len()).find(|&index| is(tokens, index, "on"))?;
+    // A qualified target's table, not its schema, is what the trigger is on.
+    assert!(
+        !punct(tokens, on + 2, '.'),
+        "a trigger on a schema-qualified table, which this reader does not resolve"
+    );
     word(tokens, on + 1).map(str::to_owned)
 }
 
@@ -472,6 +474,14 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE OR REPLACE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
          INSERT INTO t (old) VALUES (1);",
+        // Dropping one overload leaves the other callable.
+        "CREATE TABLE t (old BIGINT); CREATE TABLE log (n BIGINT); \
+         CREATE FUNCTION f(integer) RETURNS bigint AS $$ SELECT 1 $$ LANGUAGE sql; \
+         CREATE FUNCTION f(text) RETURNS bigint AS $$ SELECT 1 $$ LANGUAGE sql; \
+         DROP FUNCTION f(integer); INSERT INTO log (n) VALUES (f('x'));",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE TRIGGER fire AFTER INSERT ON public.t FOR EACH ROW EXECUTE FUNCTION g();",
         "CREATE TABLE t (old BIGINT); \
          CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE CONSTRAINT TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
