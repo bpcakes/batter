@@ -200,6 +200,7 @@ enum ItemSource {
 
 #[derive(Debug)]
 struct FromItem {
+    start: usize,
     source: ItemSource,
     alias: Option<String>,
     columns: ColumnList,
@@ -208,6 +209,7 @@ struct FromItem {
 
 /// The `FROM` item starting at `index`.
 fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
+    let start = index;
     if is(tokens, index, "lateral") || is(tokens, index, "only") {
         index += 1;
     }
@@ -264,6 +266,7 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
         index = closing(tokens, index) + 1;
     }
     FromItem {
+        start,
         source,
         alias,
         columns,
@@ -447,6 +450,10 @@ struct Declarations<'t> {
     /// The names that are common table expressions, the only declared names
     /// a FROM item can read as a relation.
     ctes: BTreeSet<String>,
+    /// Each CTE in declaration order, with its body's token range, and
+    /// whether the list is recursive, which lets any CTE read any other.
+    cte_bodies: Vec<(String, usize, usize)>,
+    recursive: bool,
     problems: Vec<String>,
 }
 
@@ -492,6 +499,8 @@ fn declarations<'t>(
         tables,
         names: BTreeMap::new(),
         ctes: BTreeSet::new(),
+        cte_bodies: Vec::new(),
+        recursive: false,
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -536,10 +545,36 @@ fn declarations<'t>(
     declarations
 }
 
+impl Declarations<'_> {
+    /// Whether the CTE `name`, read at token `at`, is declared too late for
+    /// it: in a nonrecursive list a CTE's body sees only the CTEs before it.
+    fn reads_ahead(&self, name: &str, at: usize) -> bool {
+        let position = |wanted: &str| self.cte_bodies.iter().position(|(cte, ..)| cte == wanted);
+        let container = self
+            .cte_bodies
+            .iter()
+            .position(|(_, start, end)| (*start..*end).contains(&at));
+        match (self.recursive, container, position(name)) {
+            (false, Some(container), Some(read)) => read >= container,
+            _ => false,
+        }
+    }
+}
+
 /// Declares one FROM item's alias and records what keeps it from being read.
 fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item: &FromItem) {
     let problem =
         |declarations: &mut Declarations<'_>, problem: String| declarations.problems.push(problem);
+    if let ItemSource::Relation(name) = &item.source
+        && declarations.reads_ahead(name, item.start)
+    {
+        problem(
+            declarations,
+            format!(
+                "{name} is read before its nonrecursive declaration, so it names another relation"
+            ),
+        );
+    }
     if matches!(item.source, ItemSource::Join) {
         problem(declarations, "a parenthesized join".to_owned());
     }
@@ -602,6 +637,7 @@ fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item:
 /// Declares the common table expressions of the `WITH` list at `index`.
 fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index: usize) {
     if is(tokens, index, "recursive") {
+        declarations.recursive = true;
         index += 1;
     }
     while let Some(name) = word(tokens, index).map(str::to_owned) {
@@ -635,6 +671,9 @@ fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index
             }
         };
         declarations.ctes.insert(name.clone());
+        declarations
+            .cte_bodies
+            .push((name.clone(), next + 1, close));
         declarations.declare(&name, declared);
         if !punct(tokens, close + 1, ',') {
             return;

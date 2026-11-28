@@ -280,12 +280,26 @@ fn listed(config: &str, key: &str) -> BTreeSet<String> {
     panic!("clippy.toml {key} is not closed");
 }
 
+/// The level a lint list sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Level {
+    Allow,
+    Expect,
+    /// `warn` cannot silence a lint under `-D warnings`, except for
+    /// `warnings` itself, which it turns back into warnings.
+    Warn,
+}
+
 /// Each `allow(...)` or `expect(...)` lint list in `code`, whose whitespace
 /// is removed, with whether it is an expectation and its items, skipping
 /// `.expect(` and `::expect(` calls and a list's `reason`.
-fn lint_lists(code: &str) -> Vec<(bool, Vec<&str>)> {
+fn lint_lists(code: &str) -> Vec<(Level, Vec<&str>)> {
     let mut lists = Vec::new();
-    for (expect, opener) in [(false, "allow("), (true, "expect(")] {
+    for (level, opener) in [
+        (Level::Allow, "allow("),
+        (Level::Expect, "expect("),
+        (Level::Warn, "warn("),
+    ] {
         for (start, _) in code.match_indices(opener) {
             let before = code[..start].chars().next_back();
             if before.is_some_and(|c| c == '.' || c == ':' || c == '_' || c.is_alphanumeric()) {
@@ -313,7 +327,7 @@ fn lint_lists(code: &str) -> Vec<(bool, Vec<&str>)> {
             }
             items.push(&code[item..end]);
             items.retain(|item| !item.is_empty() && !item.starts_with("reason="));
-            lists.push((expect, items));
+            lists.push((level, items));
         }
     }
     lists
@@ -424,11 +438,19 @@ fn only_the_pinned_items_suppress_the_gate() {
                 )),
             }
         }
-        for (expect, items) in lint_lists(&code) {
-            // A probe expects a gate lint to fire; nothing may allow one.
-            let probe = file == PROBES && expect;
+        for (level, items) in lint_lists(&code) {
+            // A probe expects a gate lint to fire; nothing may allow one, and
+            // nothing may turn `warnings` back from the `-D warnings` of the
+            // Clippy runs.
+            let probe = file == PROBES && level == Level::Expect;
             for item in items {
-                if names_the_gate(item) && !(probe && is_gate_lint(item)) {
+                let suppresses = match level {
+                    Level::Warn => item == "warnings" || item.contains('$'),
+                    Level::Allow | Level::Expect => {
+                        names_the_gate(item) && !(probe && is_gate_lint(item))
+                    }
+                };
+                if suppresses {
                     problems.push(format!("{file}: suppresses `{item}`"));
                 }
             }
@@ -464,21 +486,23 @@ fn the_suppression_scan_reads_each_lint_list() {
          #[allow(dead_code, /* a note */ warnings)] fn a() { x.expect(\"warnings\"); }
          #[cfg_attr(test, expect($lint, reason = \"r\"))] fn b() {}
          #[deny(clippy::disallowed_methods)] fn c() {}
+         #[warn(warnings)] fn d() {}
          Option::expect(value, \"$1\");",
     );
     let lists = lint_lists(&code);
     assert_eq!(
         lists,
         [
-            (false, vec!["dead_code", "warnings"]),
-            (true, vec!["$lint"])
+            (Level::Allow, vec!["dead_code", "warnings"]),
+            (Level::Expect, vec!["$lint"]),
+            (Level::Warn, vec!["warnings"])
         ]
     );
     let flagged: Vec<_> = lists
         .iter()
         .flat_map(|(_, items)| items.iter().copied().filter(|item| names_the_gate(item)))
         .collect();
-    assert_eq!(flagged, ["warnings", "$lint"]);
+    assert_eq!(flagged, ["warnings", "$lint", "warnings"]);
     assert!(names_the_gate("clippy::disallowed_method"));
     assert!(!names_the_gate("clippy::pedantic"));
 }

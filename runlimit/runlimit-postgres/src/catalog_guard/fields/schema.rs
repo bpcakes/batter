@@ -35,20 +35,23 @@ pub(in crate::catalog_guard) fn tables<'a>(
                 .collect::<Vec<_>>()
         })
         .collect();
-    let code = MigrationCode::of(&statements);
+    let mut code = MigrationCode::default();
     let mut tables = BTreeMap::new();
     for statement in &statements {
         code.check(statement);
+        code.apply(statement);
         apply(statement, &mut tables);
     }
     tables
 }
 
-/// The code the migrations define, whose bodies this reader does not read:
-/// their functions, and the tables their triggers fire on.
+/// The code the migrations have defined so far, in migration order, whose
+/// bodies this reader does not read: their functions, and the triggers on
+/// each table.
+#[derive(Default)]
 struct MigrationCode {
     functions: BTreeSet<String>,
-    triggered: BTreeSet<String>,
+    triggers: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// The statement kinds a migration may run; any other, such as `SELECT`,
@@ -58,24 +61,46 @@ const STATEMENT_KINDS: &[&str] = &[
 ];
 
 impl MigrationCode {
-    fn of(statements: &[Vec<Token>]) -> Self {
-        let mut code = Self {
-            functions: BTreeSet::new(),
-            triggered: BTreeSet::new(),
-        };
-        for tokens in statements {
-            if let Some(function) = defined_function(tokens) {
-                code.functions.insert(function);
+    /// Records what one statement defines, drops or renames.
+    fn apply(&mut self, tokens: &[Token]) {
+        if let Some(function) = defined_function(tokens) {
+            self.functions.insert(function);
+        } else if is(tokens, 0, "create") && is(tokens, 1, "trigger") {
+            if let (Some(name), Some(table)) = (word(tokens, 2), trigger_table(tokens)) {
+                self.triggers
+                    .entry(table)
+                    .or_default()
+                    .insert(name.to_owned());
             }
-            if is(tokens, 0, "create")
-                && is(tokens, 1, "trigger")
-                && let Some(on) = (2..tokens.len()).find(|&index| is(tokens, index, "on"))
-                && let Some(table) = word(tokens, on + 1)
+        } else if is(tokens, 0, "drop") && is(tokens, 1, "trigger") {
+            if let (Some(name), Some(table)) =
+                (word(tokens, skip_guards(tokens, 2)), trigger_table(tokens))
+                && let Some(triggers) = self.triggers.get_mut(&table)
             {
-                code.triggered.insert(table.to_owned());
+                triggers.remove(name);
+            }
+        } else if is(tokens, 0, "drop") && is(tokens, 1, "function") {
+            if let Some(name) = word(tokens, skip_guards(tokens, 2)) {
+                self.functions.remove(name);
+            }
+        } else if is(tokens, 0, "drop") && is(tokens, 1, "table") {
+            for (start, _) in items(tokens, skip_guards(tokens, 2), tokens.len()) {
+                if let Some(table) = word(tokens, start) {
+                    self.triggers.remove(table);
+                }
+            }
+        } else if is(tokens, 0, "alter") && is(tokens, 1, "table") {
+            let name = skip_guards(tokens, 2);
+            if let (Some(table), true, true, Some(renamed)) = (
+                word(tokens, name),
+                is(tokens, name + 1, "rename"),
+                is(tokens, name + 2, "to"),
+                word(tokens, name + 3),
+            ) && let Some(triggers) = self.triggers.remove(table)
+            {
+                self.triggers.insert(renamed.to_owned(), triggers);
             }
         }
-        code
     }
 
     /// Fails on a statement that runs migration-defined code now: one of
@@ -108,11 +133,20 @@ impl MigrationCode {
             "delete" if is(tokens, 1, "from") => word(tokens, skip_guards(tokens, 2)),
             _ => None,
         };
+        let fires = target
+            .and_then(|table| self.triggers.get(table))
+            .is_some_and(|triggers| !triggers.is_empty());
         assert!(
-            !target.is_some_and(|table| self.triggered.contains(table)),
+            !fires,
             "migration DML on a table whose trigger runs code this reader cannot see"
         );
     }
+}
+
+/// The table a `CREATE TRIGGER` or `DROP TRIGGER` statement names after `ON`.
+fn trigger_table(tokens: &[Token]) -> Option<String> {
+    let on = (2..tokens.len()).find(|&index| is(tokens, index, "on"))?;
+    word(tokens, on + 1).map(str::to_owned)
 }
 
 /// The function a `CREATE [OR REPLACE] FUNCTION` statement defines.
@@ -346,12 +380,21 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         // conditional create defines the table.
         "ALTER TABLE IF EXISTS later ADD COLUMN ghost BIGINT; \
          CREATE TABLE IF NOT EXISTS later (real BIGINT);",
+        // A seed before a trigger exists, or after it is dropped, fires
+        // nothing.
+        "CREATE TABLE seeded (n BIGINT); INSERT INTO seeded (n) VALUES (1); \
+         CREATE FUNCTION count_seeds() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE TRIGGER counted AFTER INSERT ON seeded FOR EACH ROW EXECUTE FUNCTION count_seeds(); \
+         DROP TRIGGER counted ON seeded; INSERT INTO seeded (n) VALUES (2);",
         // A function body's DDL runs when the function is called.
         "CREATE FUNCTION f() RETURNS void AS $body$ SELECT 1; ALTER TABLE counters DROP COLUMN id; $body$ \
          LANGUAGE sql; -- $$ is no body here
          CREATE FUNCTION g() RETURNS void AS $$ ALTER TABLE counters DROP COLUMN shard $$ LANGUAGE sql;",
     ]);
-    assert_eq!(tables.keys().collect::<Vec<_>>(), ["counters", "later"]);
+    assert_eq!(
+        tables.keys().collect::<Vec<_>>(),
+        ["counters", "later", "seeded"]
+    );
     assert_eq!(tables["later"], BTreeSet::from(["real".to_owned()]));
     assert_eq!(
         tables["counters"],
@@ -383,6 +426,10 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
          CREATE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
          INSERT INTO t (old) VALUES (1);",
+        "CREATE TABLE t (old BIGINT); \
+         CREATE FUNCTION g() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql; \
+         CREATE TRIGGER fire AFTER INSERT ON t FOR EACH ROW EXECUTE FUNCTION g(); \
+         ALTER TABLE t RENAME TO u; INSERT INTO u (old) VALUES (1);",
         "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
         "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {

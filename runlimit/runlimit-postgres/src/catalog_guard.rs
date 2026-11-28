@@ -237,6 +237,9 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         // PostgreSQL 18 reads old and new in RETURNING as the target's rows.
         "WITH old AS (SELECT 1 AS gone) UPDATE t SET used = 1 RETURNING old.gone",
         "UPDATE t SET used = 1 RETURNING WITH (NEW AS pg_catalog) pg_catalog.row_to_json",
+        // Without RECURSIVE, a CTE's body sees only the CTEs before it.
+        "WITH a AS (SELECT b.n FROM b), b(n) AS (SELECT 1) SELECT n FROM a",
+        "WITH a(n) AS (SELECT a.n FROM a) SELECT n FROM a",
         // A nested WITH's CTE is visible only inside its query.
         "SELECT a.extra FROM u AS a WHERE EXISTS (WITH u AS (SELECT 1 AS extra) SELECT 1 FROM u)",
         // A schema-qualified source is no CTE of the same name.
@@ -273,6 +276,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
         "SELECT a.id FROM t AS a FOR NO KEY UPDATE OF a",
+        "WITH b(n) AS (SELECT 1), a AS (SELECT b.n FROM b) SELECT a.n FROM a",
+        "WITH RECURSIVE a(n) AS (SELECT 1 UNION ALL SELECT a.n FROM a) SELECT a.n FROM a",
         "SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp())), a.id \
          FROM t AS a WHERE a.used IS DISTINCT FROM a.id",
         "WITH c AS (SELECT a.used::pg_catalog.text AS used, ARRAY[1, a.id] AS samples, a.id \
