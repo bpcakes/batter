@@ -443,9 +443,11 @@ struct Declarations<'t> {
 
 impl Declarations<'_> {
     fn declare(&mut self, name: &str, declared: Declared) {
-        if ["pg_catalog", "excluded"].contains(&name) || self.tables.contains_key(name) {
+        if ["pg_catalog", "excluded", "old", "new"].contains(&name)
+            || self.tables.contains_key(name)
+        {
             self.problems.push(format!(
-                "{name} is declared, but names a table, the catalog or EXCLUDED"
+                "{name} is declared, but names a table, the catalog, EXCLUDED or a RETURNING row"
             ));
         }
         if self.names.insert(name.to_owned(), declared).is_some() {
@@ -494,7 +496,7 @@ fn declarations<'t>(
             Some("using") if punct(tokens, index + 1, '(') => continue,
             // A FROM or USING list is walked whole, joins included.
             Some("from" | "using") => true,
-            Some("update") if !matches!(previous, Some("for" | "do")) => false,
+            Some("update") if !matches!(previous, Some("for" | "do" | "key")) => false,
             Some("into") if previous == Some("insert") => {
                 if let (Some(target), true, Some(alias)) = (
                     word(tokens, index + 1),

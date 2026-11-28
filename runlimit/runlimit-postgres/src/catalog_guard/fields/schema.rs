@@ -156,6 +156,15 @@ fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
         let Some(mut table) = word(tokens, name).map(str::to_owned) else {
             return;
         };
+        // `ALTER TABLE IF EXISTS` of an absent table is skipped; any other
+        // alter of one is a migration this reader cannot follow.
+        if !tables.contains_key(&table) {
+            assert!(
+                is(tokens, 2, "if"),
+                "ALTER TABLE {table} before the table exists"
+            );
+            return;
+        }
         // `ALTER TABLE t *` reaches inheriting tables this reader does not track.
         assert!(
             !punct(tokens, name + 1, '*'),
@@ -176,7 +185,7 @@ fn alter(
     table: &str,
     tables: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> Option<String> {
-    let columns = tables.entry(table.to_owned()).or_default();
+    let columns = tables.get_mut(table).expect("an altered table exists");
     let column_at = |index: usize| {
         let index = if is(action, index, "column") {
             index + 1
@@ -235,12 +244,17 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          ALTER TABLE t RENAME TO counters;
          DROP TABLE gone;
          CREATE TABLE IF NOT EXISTS counters (unrelated BIGINT);",
+        // An IF EXISTS alter of an absent table is skipped, so the later
+        // conditional create defines the table.
+        "ALTER TABLE IF EXISTS later ADD COLUMN ghost BIGINT; \
+         CREATE TABLE IF NOT EXISTS later (real BIGINT);",
         // A function body's DDL runs when the function is called.
         "CREATE FUNCTION f() RETURNS void AS $body$ SELECT 1; ALTER TABLE counters DROP COLUMN id; $body$ \
          LANGUAGE sql; -- $$ is no body here
          CREATE FUNCTION g() RETURNS void AS $$ ALTER TABLE counters DROP COLUMN shard $$ LANGUAGE sql;",
     ]);
-    assert_eq!(tables.keys().collect::<Vec<_>>(), ["counters"]);
+    assert_eq!(tables.keys().collect::<Vec<_>>(), ["counters", "later"]);
+    assert_eq!(tables["later"], BTreeSet::from(["real".to_owned()]));
     assert_eq!(
         tables["counters"],
         ["id", "parent", "shard", "spent"]
@@ -258,6 +272,7 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE t (key BIGINT, shard SMALLINT GENERATED ALWAYS AS (key % 2) STORED); \
          ALTER TABLE t DROP COLUMN key CASCADE;",
         "CREATE TABLE t (old BIGINT); ALTER TABLE t * DROP COLUMN old;",
+        "ALTER TABLE missing ADD COLUMN extra BIGINT;",
         "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
         "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {

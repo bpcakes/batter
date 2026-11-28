@@ -234,6 +234,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT j.id FROM t AS a JOIN u AS b USING (id) AS j",
         // An inheritance marker would hide the alias that follows.
         "SELECT pg_catalog.row_to_json FROM t * AS pg_catalog",
+        // PostgreSQL 18 reads old and new in RETURNING as the target's rows.
+        "WITH old AS (SELECT 1 AS gone) UPDATE t SET used = 1 RETURNING old.gone",
         // An unaliased untracked relation's row name could be any declaration.
         "SELECT pg_class.row_to_json FROM pg_catalog.pg_class \
          WHERE EXISTS (SELECT 1 FROM (SELECT 1 AS row_to_json) AS pg_class)",
@@ -262,6 +264,7 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
          SELECT changed.id, changed.total FROM changed",
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
+        "SELECT a.id FROM t AS a FOR NO KEY UPDATE OF a",
         "SELECT pg_catalog.floor(extract(epoch FROM pg_catalog.clock_timestamp())), a.id \
          FROM t AS a WHERE a.used IS DISTINCT FROM a.id",
         "WITH c AS (SELECT a.used::pg_catalog.text AS used, ARRAY[1, a.id] AS samples, a.id \
