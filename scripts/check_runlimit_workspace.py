@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Enforce local native Runlimit identities, ownership and immutable import assets."""
+import enum
 import hashlib
 import json
 import os
@@ -305,6 +306,15 @@ def top_level_lines(text):
             raise ValueError(f'Cargo.toml:{number}: unterminated string')
 
 
+class Section(enum.Enum):
+    """Where the manifest reader is: each header makes one transition, and
+    each entry has one reading in the section it is in."""
+    ROOT = 'root'      # before any header: a dotted `lints` key would set a level
+    OTHER = 'other'    # a table other than the lint tables: no entry is a lint
+    RUST = 'rust'      # [lints.rust]
+    CLIPPY = 'clippy'  # [lints.clippy]
+
+
 def manifest_lints(text):
     """The `[lints.rust]` and `[lints.clippy]` levels of a repository-controlled manifest.
 
@@ -314,7 +324,7 @@ def manifest_lints(text):
     normalized to underscores, as Cargo accepts either spelling.
     """
     levels = {'rust': {}, 'clippy': {}}
-    table, root = None, True
+    section = Section.ROOT
     for number, raw in top_level_lines(text):
         line = raw.strip()
         if not line or line.startswith('#'):
@@ -327,12 +337,15 @@ def manifest_lints(text):
             # Any other spelling of a lints table, quoted or escaped, fails closed.
             if not match and first_key(line.lstrip('[')) in ('lints', None):
                 raise ValueError(f'Cargo.toml:{number}: unsupported lint table {line}')
-            table, root = (match.group(1) if match else None), False
+            section = Section(match.group(1)) if match else Section.OTHER
             continue
-        if table is None:
-            if root and first_key(line) in ('lints', None):
+        if section is Section.ROOT:
+            if first_key(line) in ('lints', None):
                 raise ValueError(f'Cargo.toml:{number}: set lints in [lints.rust] or [lints.clippy]')
             continue
+        if section is Section.OTHER:
+            continue
+        table = section.value
         entry = LINT_ENTRY.match(line)
         level = entry and (entry.group(2) or inline_level(entry.group(3) or ''))
         if not level:

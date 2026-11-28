@@ -256,7 +256,8 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   the unqualified spelling. `src/catalog_guard.rs` reads a restricted
   dialect and rejects the rest: no dollar quoting or quoted identifiers,
   casts only as `::`, and string constants only as function arguments or
-  list elements. Published migrations are exempt and immutable, and run
+  list elements, with no backslash, whose meaning `standard_conforming_strings`
+  decides. Published migrations are exempt and immutable, and run
   under the caller's `search_path`, which must be trusted.
 - Raw subjects must not enter storage, logs, or error messages. Applications
   should derive subject keys with a secret of at least 32 bytes.

@@ -566,6 +566,17 @@ fn the_detector_reads_each_token_as_postgresql_does() {
     ] {
         assert_eq!(unqualified(call), ["join(...)"], "{call}");
     }
+    // A backslash's meaning in a constant is the session's to decide.
+    for sql in [
+        r"SELECT pg_catalog.length('a\')",
+        r"SELECT pg_catalog.length('a\', 'b')",
+    ] {
+        assert_eq!(
+            unqualified(sql),
+            ["a backslash in a string constant"],
+            "{sql}"
+        );
+    }
     // Non-ASCII code is reported, not sliced.
     assert_eq!(
         unqualified("SELECT 名 AS label"),

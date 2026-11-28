@@ -344,11 +344,18 @@ fn outside_dialect(sql: &str) -> Vec<String> {
                     found.push("a string constant outside a function argument".to_owned());
                 }
                 index += 1;
+                let start = index;
                 // A doubled quote is an escaped quote inside the same constant.
                 while index < bytes.len()
                     && (bytes[index] != b'\'' || bytes.get(index + 1) == Some(&b'\''))
                 {
                     index += if bytes[index] == b'\'' { 2 } else { 1 };
+                }
+                // With standard_conforming_strings off, a backslash escapes
+                // the quote after it, so where the constant ends would depend
+                // on the caller's session.
+                if bytes[start..index.min(bytes.len())].contains(&b'\\') {
+                    found.push("a backslash in a string constant".to_owned());
                 }
                 index += 1;
             }
