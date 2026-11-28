@@ -157,6 +157,34 @@ pub(super) fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     }
 }
 
+/// Whether the `FROM` at `index` ends `IS [NOT] DISTINCT FROM`, a
+/// comparison; `distinct` alone, as in `SELECT 1 AS distinct FROM t`, does
+/// not make it one.
+pub(super) fn is_distinct_from(tokens: &[Token], index: usize) -> bool {
+    let before = |back: usize| index.checked_sub(back);
+    is(tokens, index, "from")
+        && before(1).is_some_and(|at| is(tokens, at, "distinct"))
+        && (before(2).is_some_and(|at| is(tokens, at, "is"))
+            || before(2).is_some_and(|at| is(tokens, at, "not"))
+                && before(3).is_some_and(|at| is(tokens, at, "is")))
+}
+
+/// Whether the parenthesis at `open` holds a join's `USING` column list:
+/// names separated by commas. A `DELETE ... USING (...)` source holds a
+/// query or a join instead, and is read as a FROM item.
+pub(super) fn using_columns(tokens: &[Token], open: usize) -> bool {
+    let close = closing(tokens, open);
+    close > open + 1
+        && tokens[open + 1..close]
+            .iter()
+            .enumerate()
+            .all(|(at, token)| match token {
+                Token::Word(_) => at % 2 == 0,
+                Token::Punct(',') => at % 2 == 1,
+                _ => false,
+            })
+}
+
 /// Whether token `index` sits directly inside a call whose syntax uses
 /// `FROM` for an argument: `EXTRACT`, `SUBSTRING`, `TRIM`, `OVERLAY` or
 /// `POSITION`.

@@ -269,17 +269,18 @@ fn only_the_listed_catalog_functions_may_be_called() {
     );
 }
 
-// `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
-// such column, so a qualified name must be a column of its declared receiver.
+// A statement fails where its family's history alone is installed if it
+// reads or writes another family's table, so every relation, aliased or
+// not and wherever it appears, is checked against the family's tables.
 #[test]
-fn a_qualified_name_must_be_a_column_of_its_receiver() {
+fn every_relation_is_a_table_of_the_family_or_a_cte() {
     let tables = inventory(&[("t", &["id", "shard", "used"]), ("u", &["id", "label"])]);
     for sql in [
-        "SELECT a.row_to_json FROM t AS a",
-        // An output alias of the same name is not a column of `a`.
-        "SELECT a.row_to_json AS row_to_json FROM t AS a",
-        "SELECT a.label FROM t AS a JOIN u AS b ON TRUE",
-        "SELECT missing.id FROM t",
+        // `distinct` alone does not make the next FROM a comparison.
+        "SELECT 1 AS distinct FROM elsewhere",
+        "WITH s AS (SELECT 1 AS distinct FROM t) SELECT s.distinct, s.other FROM s",
+        // A parenthesized DELETE source is a FROM item, not a column list.
+        "DELETE FROM t USING (u JOIN elsewhere ON TRUE) WHERE t.id = 1",
         // A TABLE query reads a relation outside any FROM list.
         "SELECT EXISTS (TABLE elsewhere)",
         "SELECT EXISTS (TABLE t)",
@@ -292,6 +293,25 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "INSERT INTO elsewhere AS e (id) VALUES (1)",
         "INSERT INTO elsewhere (id) VALUES (1)",
         "SELECT e.id FROM other.t AS e",
+    ] {
+        assert!(
+            !fields::unresolved(sql, &tables).is_empty(),
+            "{sql} must fail"
+        );
+    }
+}
+
+// `a.row_to_json` calls row_to_json(a) through search_path when `a` has no
+// such column, so a qualified name must be a column of its declared receiver.
+#[test]
+fn a_qualified_name_must_be_a_column_of_its_receiver() {
+    let tables = inventory(&[("t", &["id", "shard", "used"]), ("u", &["id", "label"])]);
+    for sql in [
+        "SELECT a.row_to_json FROM t AS a",
+        // An output alias of the same name is not a column of `a`.
+        "SELECT a.row_to_json AS row_to_json FROM t AS a",
+        "SELECT a.label FROM t AS a JOIN u AS b ON TRUE",
+        "SELECT missing.id FROM t",
         "SELECT (a).row_to_json FROM t AS a",
         // Only a bare column reference or an `AS` item names a column.
         "WITH c AS (SELECT * FROM t) SELECT c.id FROM c",
@@ -385,6 +405,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "DELETE FROM t USING (SELECT u.id AS gone FROM u) AS expired WHERE t.id = expired.gone",
         "DELETE FROM t USING (SELECT u.id AS gone FROM u) expired WHERE t.id = expired.gone",
         "WITH s AS (SELECT 1 IS DISTINCT FROM 2 AS changed) SELECT s.changed FROM s",
+        "WITH s AS (SELECT 1 IS NOT DISTINCT FROM 2 AS same) SELECT s.same FROM s",
+        "SELECT a.id FROM t AS a JOIN u AS b USING (id, label)",
         "SELECT a.id FROM t AS a JOIN u AS b ON ARRAY[a.id, b.id] = $1, u AS c WHERE c.id = a.id",
         "WITH b(n) AS (SELECT 1), a AS (SELECT b.n FROM b) SELECT a.n FROM a",
         "WITH RECURSIVE a(n) AS (SELECT 1 UNION ALL SELECT a.n FROM a) SELECT a.n FROM a",

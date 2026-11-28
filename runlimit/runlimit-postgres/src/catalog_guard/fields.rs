@@ -30,8 +30,8 @@ use super::detector::strip_comments_and_quotes;
 mod from_items;
 
 use from_items::{
-    ColumnList, FromItem, ItemSource, column_list, from_item, in_call_syntax, next_from_item,
-    opens_query,
+    ColumnList, FromItem, ItemSource, column_list, from_item, in_call_syntax, is_distinct_from,
+    next_from_item, opens_query, using_columns,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,9 +173,7 @@ fn output_names(tokens: &[Token], start: usize, end: usize) -> Option<BTreeSet<S
         let mut from = list;
         let list_end = loop {
             match top_level_word(tokens, from, end, &LIST_ENDS) {
-                Some(at)
-                    if is(tokens, at, "from") && is(tokens, at.wrapping_sub(1), "distinct") =>
-                {
+                Some(at) if is_distinct_from(tokens, at) => {
                     from = at + 1;
                 }
                 found => break found.unwrap_or(end),
@@ -319,12 +317,12 @@ fn declarations<'t>(
             {
                 continue;
             }
-            Some("from") if previous == Some("distinct") || in_call_syntax(tokens, index) => {
+            Some("from") if is_distinct_from(tokens, index) || in_call_syntax(tokens, index) => {
                 continue;
             }
             // A join's `USING (columns)` holds names; `USING (query)` is a
             // DELETE source, read as a FROM item.
-            Some("using") if punct(tokens, index + 1, '(') && !opens_query(tokens, index + 1) => {
+            Some("using") if punct(tokens, index + 1, '(') && using_columns(tokens, index + 1) => {
                 continue;
             }
             // A FROM or USING list is walked whole, joins included.
@@ -567,7 +565,7 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
         // declaration scan does not read.
         if is(&tokens, index, "using")
             && punct(&tokens, index + 1, '(')
-            && !opens_query(&tokens, index + 1)
+            && using_columns(&tokens, index + 1)
             && is(&tokens, closing(&tokens, index + 1) + 1, "as")
         {
             found.push("a JOIN USING alias".to_owned());
