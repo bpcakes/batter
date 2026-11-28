@@ -510,46 +510,7 @@ fn declarations<'t>(
         let mut item_start = index + 1;
         loop {
             let item = from_item(tokens, item_start);
-            if matches!(item.source, ItemSource::Join) {
-                declarations
-                    .problems
-                    .push("a parenthesized join".to_owned());
-            }
-            if let Some(alias) = &item.alias {
-                let declared = match (&item.columns, &item.source) {
-                    (ColumnList::Names(columns), _) => Declared::Columns(columns.clone()),
-                    (ColumnList::Typed, _) => {
-                        declarations.problems.push(format!(
-                            "{alias}'s column definition list types columns the guard does not check"
-                        ));
-                        Declared::Unlisted
-                    }
-                    (ColumnList::Absent, ItemSource::Relation(name)) => {
-                        Declared::Alias(name.clone())
-                    }
-                    (ColumnList::Absent, ItemSource::Query(start, end)) => {
-                        Declared::Query(*start, *end)
-                    }
-                    (ColumnList::Absent, ItemSource::Function | ItemSource::Join) => {
-                        Declared::Unlisted
-                    }
-                };
-                declarations.declare(alias, declared);
-            }
-            // `table *` and other unread punctuation would hide an alias.
-            if tokens.get(item.end).is_some_and(
-                |token| matches!(token, Token::Punct(c) if !matches!(c, ',' | ')' | ';')),
-            ) {
-                declarations
-                    .problems
-                    .push("unread tokens in a FROM item".to_owned());
-            }
-            // A function's implicit row name could shadow another relation.
-            if item.alias.is_none() && matches!(item.source, ItemSource::Function) {
-                declarations
-                    .problems
-                    .push("a function in FROM without an alias".to_owned());
-            }
+            record_from_item(&mut declarations, tokens, &item);
             match next_from_item(tokens, item.end) {
                 Some(next) if lists => item_start = next,
                 _ => break,
@@ -557,6 +518,59 @@ fn declarations<'t>(
         }
     }
     declarations
+}
+
+/// Declares one FROM item's alias and records what keeps it from being read.
+fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item: &FromItem) {
+    let problem =
+        |declarations: &mut Declarations<'_>, problem: String| declarations.problems.push(problem);
+    if matches!(item.source, ItemSource::Join) {
+        problem(declarations, "a parenthesized join".to_owned());
+    }
+    // `table *` and other unread punctuation would hide an alias.
+    if tokens
+        .get(item.end)
+        .is_some_and(|token| matches!(token, Token::Punct(c) if !matches!(c, ',' | ')' | ';')))
+    {
+        problem(declarations, "unread tokens in a FROM item".to_owned());
+    }
+    let Some(alias) = &item.alias else {
+        match &item.source {
+            // An unaliased relation's row name is its own: a migrated table
+            // or a CTE of this statement, never an untracked relation whose
+            // name a declaration elsewhere could stand for.
+            ItemSource::Relation(name)
+                if !declarations.tables.contains_key(name)
+                    && !declarations.names.contains_key(name) =>
+            {
+                problem(
+                    declarations,
+                    format!("{name} in FROM is neither a migrated table nor a CTE"),
+                );
+            }
+            // A function's implicit row name could shadow another relation.
+            ItemSource::Function => problem(
+                declarations,
+                "a function in FROM without an alias".to_owned(),
+            ),
+            _ => {}
+        }
+        return;
+    };
+    let declared = match (&item.columns, &item.source) {
+        (ColumnList::Names(columns), _) => Declared::Columns(columns.clone()),
+        (ColumnList::Typed, _) => {
+            problem(
+                declarations,
+                format!("{alias}'s column definition list types columns the guard does not check"),
+            );
+            Declared::Unlisted
+        }
+        (ColumnList::Absent, ItemSource::Relation(name)) => Declared::Alias(name.clone()),
+        (ColumnList::Absent, ItemSource::Query(start, end)) => Declared::Query(*start, *end),
+        (ColumnList::Absent, ItemSource::Function | ItemSource::Join) => Declared::Unlisted,
+    };
+    declarations.declare(alias, declared);
 }
 
 /// Declares the common table expressions of the `WITH` list at `index`.

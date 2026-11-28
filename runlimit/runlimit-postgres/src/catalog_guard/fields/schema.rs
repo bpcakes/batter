@@ -89,6 +89,15 @@ fn skip_guards(tokens: &[Token], mut index: usize) -> usize {
 }
 
 fn apply(tokens: &[Token], tables: &mut BTreeMap<String, BTreeSet<String>>) {
+    // A cascading drop, of a column, type, domain or function, also drops
+    // dependent columns this reader cannot see; `ON DELETE CASCADE` and
+    // `ON UPDATE CASCADE` are referential actions, not drops.
+    assert!(
+        !(1..tokens.len()).any(|index| is(tokens, index, "cascade")
+            && !is(tokens, index - 1, "delete")
+            && !is(tokens, index - 1, "update")),
+        "a cascading drop, whose dependent column removals this reader does not apply"
+    );
     // A DO block, procedure call or EXECUTE runs now, with schema effects
     // this reader cannot see.
     assert!(
@@ -183,12 +192,6 @@ fn alter(
             }
         }
         Some("drop") if !is(action, 1, "constraint") => {
-            // CASCADE can also drop dependent columns, such as a generated
-            // one, which this reader cannot see.
-            assert!(
-                !action.contains(&Token::Word("cascade".to_owned())),
-                "ALTER TABLE {table}: a cascading DROP this reader does not apply"
-            );
             if let Some(column) = word(action, column_at(1)) {
                 columns.remove(column);
             }
@@ -223,6 +226,7 @@ fn alter(
 fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
     let tables = tables([
         "CREATE TABLE IF NOT EXISTS t (id BIGINT PRIMARY KEY, used BIGINT, old TEXT, \
+         parent BIGINT REFERENCES t (id) ON DELETE CASCADE ON UPDATE CASCADE, \
          CONSTRAINT used_positive CHECK (used > 0));
          CREATE TABLE gone (id BIGINT);",
         "ALTER TABLE t ADD COLUMN shard SMALLINT, DROP COLUMN IF EXISTS old, \
@@ -239,7 +243,7 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
     assert_eq!(tables.keys().collect::<Vec<_>>(), ["counters"]);
     assert_eq!(
         tables["counters"],
-        ["id", "shard", "spent"]
+        ["id", "parent", "shard", "spent"]
             .map(str::to_owned)
             .into_iter()
             .collect()
@@ -254,6 +258,8 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
         "CREATE TABLE t (key BIGINT, shard SMALLINT GENERATED ALWAYS AS (key % 2) STORED); \
          ALTER TABLE t DROP COLUMN key CASCADE;",
         "CREATE TABLE t (old BIGINT); ALTER TABLE t * DROP COLUMN old;",
+        "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
+        "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {
         assert!(
             std::panic::catch_unwind(|| super::tables([unreadable])).is_err(),

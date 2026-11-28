@@ -234,6 +234,9 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT j.id FROM t AS a JOIN u AS b USING (id) AS j",
         // An inheritance marker would hide the alias that follows.
         "SELECT pg_catalog.row_to_json FROM t * AS pg_catalog",
+        // An unaliased untracked relation's row name could be any declaration.
+        "SELECT pg_class.row_to_json FROM pg_catalog.pg_class \
+         WHERE EXISTS (SELECT 1 FROM (SELECT 1 AS row_to_json) AS pg_class)",
         // EXCLUDED is the conflict pseudo-row only: no alias, and no row
         // before the conflict clause.
         "INSERT INTO t (id) SELECT excluded.id FROM u AS excluded",
