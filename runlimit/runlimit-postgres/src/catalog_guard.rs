@@ -287,6 +287,14 @@ fn a_keyword_used_as_a_name_is_a_name() {
         "SELECT 1 delete FROM t, elsewhere",
         "SELECT (1) delete FROM t, elsewhere",
         "SELECT 1 AS update FROM t, elsewhere",
+        // A join alias named conflict does not open ON CONFLICT.
+        "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id JOIN elsewhere AS e ON TRUE",
+        "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id, elsewhere",
+        // A recursive CTE's SEARCH or CYCLE clause is outside the dialect.
+        "WITH RECURSIVE r(id) AS (SELECT u.id FROM u) SEARCH DEPTH FIRST BY id SET ordering \
+         UPDATE elsewhere SET used = 1",
+        "WITH RECURSIVE r(id) AS (SELECT u.id FROM u) CYCLE id SET looped USING path \
+         SELECT r.id FROM r",
         // SELECT INTO creates a table, whatever word precedes INTO.
         "SELECT 1 AS n INTO sampled",
         "WITH s AS (SELECT 1 AS n) SELECT n INTO sampled FROM s",
@@ -300,6 +308,8 @@ fn a_keyword_used_as_a_name_is_a_name() {
     }
     for sql in [
         "WITH c AS (SELECT 1 AS id OFFSET 0) SELECT c.id FROM c",
+        "SELECT a.id FROM t AS a JOIN u AS conflict ON conflict.id = a.id",
+        "SELECT search.id FROM (SELECT u.id FROM u) search",
         "WITH c AS (SELECT 1 AS limit, 2 AS n FROM t) SELECT c.limit, c.n FROM c",
         "WITH c AS (SELECT pg_catalog.percentile_cont(0.5) WITHIN GROUP (ORDER BY t.used) AS p FROM t) \
          SELECT c.p FROM c",

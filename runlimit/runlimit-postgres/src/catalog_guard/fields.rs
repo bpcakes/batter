@@ -107,19 +107,35 @@ fn opening(tokens: &[Token], close: usize) -> Option<usize> {
     None
 }
 
+/// Whether the `ON` at `on` opens an INSERT's `ON CONFLICT` clause, which
+/// continues with a conflict target or `DO`. A join condition may begin
+/// with a row named conflict instead (`ON conflict.id = a.id`); an
+/// unqualified call `conflict(...)` fails the detector.
+fn opens_on_conflict(tokens: &[Token], on: usize) -> bool {
+    is(tokens, on, "on")
+        && is(tokens, on + 1, "conflict")
+        && (punct(tokens, on + 2, '(')
+            || is(tokens, on + 2, "do")
+            || is(tokens, on + 2, "on") && is(tokens, on + 3, "constraint"))
+}
+
+/// Whether the parenthesis at `open` opens a CTE body: `AS (` or
+/// `AS [NOT] MATERIALIZED (`.
+fn opens_cte_body(tokens: &[Token], open: usize) -> bool {
+    punct(tokens, open, '(')
+        && (is(tokens, open.wrapping_sub(1), "as")
+            || is(tokens, open.wrapping_sub(1), "materialized"))
+}
+
 /// Whether the command word at `index` begins a command: the statement's
 /// own, a data-modifying CTE body's (`AS (DELETE ...`), or the main one
 /// after the CTE list (`WITH c AS (...) UPDATE ...`). Anywhere else the
 /// word is a name, such as a column label (`SELECT 1 AS delete FROM t`).
 fn opens_command(tokens: &[Token], index: usize) -> bool {
-    let body = |open: usize| {
-        punct(tokens, open, '(')
-            && (is(tokens, open.wrapping_sub(1), "as")
-                || is(tokens, open.wrapping_sub(1), "materialized"))
-    };
     index == 0
-        || body(index - 1)
-        || punct(tokens, index - 1, ')') && opening(tokens, index - 1).is_some_and(body)
+        || opens_cte_body(tokens, index - 1)
+        || punct(tokens, index - 1, ')')
+            && opening(tokens, index - 1).is_some_and(|open| opens_cte_body(tokens, open))
 }
 
 /// The index of the parenthesis closing the one at `open`.
@@ -600,6 +616,16 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
         if is(&tokens, index, "table") {
             found.push("a TABLE query".to_owned());
         }
+        // A recursive CTE's SEARCH or CYCLE clause follows its body. The
+        // scan reads neither, and the command after one would go
+        // unrecognized, so neither is part of the dialect.
+        if (is(&tokens, index, "search") || is(&tokens, index, "cycle"))
+            && index > 0
+            && punct(&tokens, index - 1, ')')
+            && opening(&tokens, index - 1).is_some_and(|open| opens_cte_body(&tokens, open))
+        {
+            found.push("a CTE SEARCH or CYCLE clause".to_owned());
+        }
         // `SELECT ... INTO` creates a table; only an INSERT that begins a
         // command writes one. INTO is reserved, so the word is the keyword.
         if is(&tokens, index, "into")
@@ -637,7 +663,7 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
         [into] => {
             let end = enclosing_end(&tokens, *into);
             (*into..end)
-                .find(|&index| is(&tokens, index, "conflict") && is(&tokens, index - 1, "on"))
+                .find(|&index| opens_on_conflict(&tokens, index))
                 .and_then(|conflict| {
                     let target = word(&tokens, into + 1)?;
                     Some((conflict..end, tables.get(target).cloned()?))
