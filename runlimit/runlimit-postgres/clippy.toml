@@ -87,6 +87,10 @@ disallowed-types = [
     { path = "sqlx::testing::TestArgs", reason = "sqlx::testing runs fixture SQL and manages databases" },
     { path = "sqlx::testing::TestFixture", reason = "sqlx::testing runs fixture SQL and manages databases" },
     { path = "sqlx::testing::TestContext", reason = "sqlx::testing runs fixture SQL and manages databases" },
+    { path = "sqlx::query::Query", reason = "run only a statements::Bound, which only a Statement builds" },
+    { path = "sqlx::query::QueryAs", reason = "run only a statements::Bound, which only a Statement builds" },
+    { path = "sqlx::query::QueryScalar", reason = "run only a statements::Bound, which only a Statement builds" },
+    { path = "sqlx::query::Map", reason = "run only a statements::Bound, which only a Statement builds" },
 ]
 disallowed-macros = [
     { path = "sqlx::query", reason = "run SQL only through statements::Statement::query" },

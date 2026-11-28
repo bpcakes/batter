@@ -107,6 +107,10 @@ const TYPES: &[&str] = &[
     "sqlx::testing::TestArgs",
     "sqlx::testing::TestFixture",
     "sqlx::testing::TestContext",
+    "sqlx::query::Query",
+    "sqlx::query::QueryAs",
+    "sqlx::query::QueryScalar",
+    "sqlx::query::Map",
 ];
 
 /// sqlx's query macros.
@@ -217,9 +221,18 @@ fn exceptions() -> Vec<(&'static str, String)> {
         (
             "statements.rs",
             "#[expect(clippy::disallowed_methods, reason = \"the one place SQL text reaches sqlx\")]
-             pub(crate) fn query<'q>(self) -> Query<'q, Postgres, PgArguments> {
-                 sqlx::query(self.sql())
+             pub(crate) fn query<'q>(self) -> Bound<'q> {
+                 Bound(sqlx::query(self.sql()))
              }"
+            .to_owned(),
+        ),
+        // The one sqlx query value: every statement runs as a `Bound`.
+        (
+            "statements.rs",
+            "pub(crate) struct Bound<'q>(
+                 #[expect(clippy::disallowed_types, reason = \"the one place a sqlx query value is held\")]
+                 sqlx::query::Query<'q, Postgres, PgArguments>,
+             );"
             .to_owned(),
         ),
         // The one migrator run: it selects a bundled history itself and runs a

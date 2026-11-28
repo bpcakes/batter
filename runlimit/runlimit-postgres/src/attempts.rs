@@ -28,7 +28,7 @@ use crate::{
     CheckError, CheckPhase, PostgresConfig,
     base::{BundledHistory, PgLimiterBase},
     protocol::{ATTEMPT_LOCK_NAMESPACE, capacity_shard},
-    statements::attempts as sql,
+    statements::{Bound, attempts as sql},
     transaction::{BoundedConnection, Check, CheckTransaction, ConnectionOutcome},
 };
 use row::StoredAttempt;
@@ -41,10 +41,9 @@ use runlimit_core::{
     },
 };
 use sqlx::{
-    PgPool, Postgres, Row,
+    PgPool, Row,
     migrate::{MigrateError, Migrator},
-    postgres::{PgArguments, PgRow},
-    query::Query,
+    postgres::PgRow,
 };
 use std::{fmt, sync::Arc, time::Duration};
 
@@ -427,7 +426,7 @@ fn completion_query<'a>(
     receipt: &'a PgAttemptReceipt,
     outcome: AttemptOutcome,
     transaction_id: Option<&'a str>,
-) -> Query<'a, Postgres, PgArguments> {
+) -> Bound<'a> {
     // A success applies no delay, and the statement never reads the schedule.
     let schedule = match outcome {
         AttemptOutcome::Success => Vec::new(),

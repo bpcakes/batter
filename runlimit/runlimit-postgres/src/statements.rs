@@ -14,7 +14,10 @@
 //! keeps to the dialect `crate::catalog_guard` reads. Published migrations
 //! are immutable and run only through their migrators.
 
-use sqlx::{Postgres, postgres::PgArguments, query::Query};
+use sqlx::{
+    Encode, Error, Executor, Postgres, Type,
+    postgres::{PgArguments, PgQueryResult, PgRow},
+};
 
 /// Declares one family's statements: an `Id` variant and a constant per
 /// statement. A statement's text is a string literal or the `include_str!`
@@ -172,13 +175,72 @@ families! {
     Session => session,
 }
 
+/// A declared statement with its arguments bound: every query this crate
+/// runs, and constructed only by [`Statement::query`]. sqlx's query types
+/// are disallowed everywhere else, so a helper that took a query built from
+/// other SQL would have to name one.
+#[must_use = "a bound statement runs only when executed"]
+pub(crate) struct Bound<'q>(
+    #[expect(
+        clippy::disallowed_types,
+        reason = "the one place a sqlx query value is held"
+    )]
+    sqlx::query::Query<'q, Postgres, PgArguments>,
+);
+
+impl<'q> Bound<'q> {
+    /// Binds the next parameter.
+    pub(crate) fn bind<'t, T: Encode<'t, Postgres> + Type<Postgres>>(self, value: T) -> Self {
+        Self(self.0.bind(value))
+    }
+
+    /// Runs the statement, returning what it affected.
+    pub(crate) async fn execute<'e, 'c: 'e, E>(self, executor: E) -> Result<PgQueryResult, Error>
+    where
+        'q: 'e,
+        E: Executor<'c, Database = Postgres>,
+    {
+        self.0.execute(executor).await
+    }
+
+    /// Runs the statement, returning every row.
+    pub(crate) async fn fetch_all<'e, 'c: 'e, E>(self, executor: E) -> Result<Vec<PgRow>, Error>
+    where
+        'q: 'e,
+        E: Executor<'c, Database = Postgres>,
+    {
+        self.0.fetch_all(executor).await
+    }
+
+    /// Runs the statement, returning its one row.
+    pub(crate) async fn fetch_one<'e, 'c: 'e, E>(self, executor: E) -> Result<PgRow, Error>
+    where
+        'q: 'e,
+        E: Executor<'c, Database = Postgres>,
+    {
+        self.0.fetch_one(executor).await
+    }
+
+    /// Runs the statement, returning its row if it has one.
+    pub(crate) async fn fetch_optional<'e, 'c: 'e, E>(
+        self,
+        executor: E,
+    ) -> Result<Option<PgRow>, Error>
+    where
+        'q: 'e,
+        E: Executor<'c, Database = Postgres>,
+    {
+        self.0.fetch_optional(executor).await
+    }
+}
+
 impl Statement {
-    /// The statement as a query ready for binding.
+    /// The statement ready for binding.
     #[expect(
         clippy::disallowed_methods,
         reason = "the one place SQL text reaches sqlx"
     )]
-    pub(crate) fn query<'q>(self) -> Query<'q, Postgres, PgArguments> {
-        sqlx::query(self.sql())
+    pub(crate) fn query<'q>(self) -> Bound<'q> {
+        Bound(sqlx::query(self.sql()))
     }
 }

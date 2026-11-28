@@ -600,6 +600,12 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }
+    // Non-ASCII code is reported, not sliced.
+    assert_eq!(
+        unqualified("SELECT 名 AS label"),
+        ["a non-ASCII character outside a comment or string"]
+    );
+    assert!(catalog_calls("SELECT 名 AS label").is_empty());
     // A vertical tab or form feed separates tokens for PostgreSQL alone.
     for sql in ["SELECT floor\u{b}(1)", "SELECT pg_catalog.floor(1)\u{c}"] {
         assert_eq!(

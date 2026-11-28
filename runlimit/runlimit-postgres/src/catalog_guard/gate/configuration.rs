@@ -228,7 +228,10 @@ fn predicate_parts(list: &str) -> Vec<&str> {
             _ => {}
         }
     }
-    parts.push(&list[start..]);
+    // A trailing comma (`all(test, feature = "serde",)`) ends no part.
+    if !list[start..].is_empty() || parts.is_empty() {
+        parts.push(&list[start..]);
+    }
     parts
 }
 
@@ -289,7 +292,11 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
         [false, true, true],
         "{predicates:?}"
     );
+    for spelled in ["all(test,feature=\"serde\",)", "not(test,)"] {
+        assert!(linted(&normalize(spelled)), "{spelled}");
+    }
     for unlinted in [
+        "all(test,,)",
         "unix",
         "target_os = \"macos\"",
         "any(test, panic = \"abort\")",

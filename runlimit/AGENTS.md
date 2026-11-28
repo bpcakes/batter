@@ -207,7 +207,10 @@ executor; the unexecuted original moves to `provenance/`, outside every package.
   every sqlx entry point that accepts SQL text or builds SQL from a name the
   crate supplies (migration tables, databases, `LISTEN` channels), and the
   advisory-lock helper whose SQL resolves through `search_path`, so SQL reaches sqlx only
-  through `Statement::query`; the other pinned exceptions are the three
+  through `Statement::query`. It returns a `statements::Bound`, the one sqlx
+  query value the crate holds, and sqlx's query types are disallowed
+  elsewhere, so a helper cannot take a query built from other SQL; execute
+  through `Bound`'s methods. The other pinned exceptions are the three
   bundled `sqlx::migrate!` statics and `PgLimiterBase::migrate`, which runs
   only a closed `BundledHistory`. Do not suppress those lints, their groups,
   `warnings` or `unfulfilled_lint_expectations` anywhere else, and re-read

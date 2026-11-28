@@ -429,7 +429,7 @@ fn generic_executor<'e, E: sqlx::Executor<'e, Database = Postgres>>(executor: E)
     let _ = executor.fetch_all(SQL);
 }
 
-#[expect(clippy::disallowed_methods, reason = "probe")]
+#[expect(clippy::disallowed_methods, clippy::disallowed_types, reason = "probe")]
 fn function_pointer() {
     let _: fn(&'static str) -> sqlx::query::Query<'static, Postgres, PgArguments> = sqlx::query;
 }
@@ -442,4 +442,27 @@ fn local_macro(connection: &mut PgConnection) {
         };
     }
     let _ = hidden!(connection);
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+async fn caller_supplied(
+    query: sqlx::query::Query<'_, Postgres, PgArguments>,
+    connection: &mut PgConnection,
+) {
+    let _ = query.execute(connection).await;
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn query_as_value(query: sqlx::query::QueryAs<'_, Postgres, (i64,), PgArguments>) {
+    drop(query);
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn query_scalar_value(query: sqlx::query::QueryScalar<'_, Postgres, i64, PgArguments>) {
+    drop(query);
+}
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn mapped_value<F>(query: sqlx::query::Map<'_, Postgres, F, PgArguments>) {
+    drop(query);
 }

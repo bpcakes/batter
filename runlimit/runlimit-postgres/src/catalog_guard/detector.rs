@@ -70,6 +70,11 @@ const COLUMN_LIST_OWNERS: &[&str] = &["as", "into"];
 pub(super) fn unqualified(sql: &str) -> Vec<String> {
     let mut found = outside_dialect(sql);
     let code = strip_comments_and_quotes(sql);
+    // Non-ASCII code is outside the dialect, already reported, and the
+    // byte-offset scan below would split its characters.
+    if !code.is_ascii() {
+        return found;
+    }
     let ctes = cte_names(&code);
     let listed = super::fields::listed_alias_offsets(sql);
     let bytes = code.as_bytes();
@@ -142,6 +147,11 @@ pub(super) fn catalog_calls(sql: &str) -> BTreeSet<String> {
     let code = strip_comments_and_quotes(sql);
     let bytes = code.as_bytes();
     let mut calls = BTreeSet::new();
+    // Non-ASCII code is `unqualified`'s finding; slicing it here would split
+    // its characters.
+    if !code.is_ascii() {
+        return calls;
+    }
     let mut index = 0;
     while index < bytes.len() {
         if !is_identifier_start(bytes[index]) || index > 0 && is_identifier_part(bytes[index - 1]) {
