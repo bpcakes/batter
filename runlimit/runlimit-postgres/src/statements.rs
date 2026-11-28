@@ -30,14 +30,12 @@ macro_rules! statements {
         $(#[$attribute:meta])* $name:ident = $reader:ident!($path:literal); $($rest:tt)*
     ) => {
         statements!(@only_include_str $reader);
-        statements!(@munch [$($done)* {
-            [$(#[$attribute])*] $name (::core::$reader!($path)) (Some($path))
-        }] $($rest)*);
+        statements!(@munch [$($done)* { [$(#[$attribute])*] $name included $path }] $($rest)*);
     };
     (@munch [$($done:tt)*]
         $(#[$attribute:meta])* $name:ident = $sql:literal; $($rest:tt)*
     ) => {
-        statements!(@munch [$($done)* { [$(#[$attribute])*] $name ($sql) (None) }] $($rest)*);
+        statements!(@munch [$($done)* { [$(#[$attribute])*] $name literal $sql }] $($rest)*);
     };
     (@munch [$($done:tt)*] $($rest:tt)+) => {
         compile_error!(
@@ -48,7 +46,14 @@ macro_rules! statements {
     (@only_include_str $other:ident) => {
         compile_error!("a statement may include its text only with include_str!");
     };
-    (@emit $({ [$($attribute:tt)*] $name:ident ($($text:tt)+) ($($file:tt)+) })+) => {
+    // Text and file come from the one literal each entry carries, so even a
+    // direct `@emit` cannot name a constant: an entry it cannot read falls
+    // through to the catch-all, whose `@munch` rejects it.
+    (@text literal $sql:literal) => { $sql };
+    (@text included $path:literal) => { ::core::include_str!($path) };
+    (@file literal $sql:literal) => { None };
+    (@file included $path:literal) => { Some($path) };
+    (@emit $({ [$($attribute:tt)*] $name:ident $kind:ident $value:literal })+) => {
         /// The statements this family declares.
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         #[allow(
@@ -68,7 +73,7 @@ macro_rules! statements {
             /// The statement's text.
             pub(crate) const fn sql(self) -> &'static str {
                 match self {
-                    $(Self::$name => $($text)+,)+
+                    $(Self::$name => statements!(@text $kind $value),)+
                 }
             }
 
@@ -85,7 +90,7 @@ macro_rules! statements {
             #[cfg(test)]
             pub(crate) const fn file(self) -> Option<&'static str> {
                 match self {
-                    $(Self::$name => $($file)+,)+
+                    $(Self::$name => statements!(@file $kind $value),)+
                 }
             }
         }

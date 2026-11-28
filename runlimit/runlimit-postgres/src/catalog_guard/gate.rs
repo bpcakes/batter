@@ -21,6 +21,8 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// sqlx functions and methods that accept SQL text or turn text into SQL.
@@ -605,19 +607,57 @@ fn every_build_compiles_the_same_statements() {
 /// The one item the macro probes' flag may compile.
 const PROBE_MODULE: &str = "#[cfg(runlimit_macro_probes)] mod macro_probes;";
 
-/// The configuration predicates of each `cfg(...)`, `cfg!(...)` and
-/// `cfg_attr(...)` in normalized `code`. Any other configuration word, or
-/// one this reader cannot follow, yields itself, which no check accepts.
+/// Where each attribute's contents start and end in normalized `code`.
+fn attribute_spans(code: &str) -> Vec<(usize, usize)> {
+    code.match_indices('#')
+        .filter_map(|(at, _)| {
+            let bang = usize::from(code[at + 1..].starts_with('!'));
+            let start = at + 1 + bang + 1;
+            code[at + 1 + bang..].starts_with('[').then_some(())?;
+            let mut depth = 1_usize;
+            let end = code[start..].char_indices().find_map(|(offset, c)| {
+                match c {
+                    '[' => depth += 1,
+                    ']' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(start + offset)
+            })?;
+            Some((start, end))
+        })
+        .collect()
+}
+
+/// Whether the word at `at` sits in a `use` item, which could import a
+/// configuration macro under another name.
+fn in_use_item(code: &str, at: usize) -> bool {
+    let item = code[..at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |boundary| boundary + 1);
+    has_token(&code[item..at], "use")
+}
+
+/// The configuration predicates in normalized `code`: each of a `cfg` or
+/// `cfg_attr` attribute and a `cfg!` call. Any other configuration syntax (a
+/// `cfg`-prefixed macro such as `cfg_select!`, a `cfg` word elsewhere in an
+/// attribute, or one a `use` item imports) yields its word, which no check
+/// accepts. An ordinary name such as `cfg_for_pool(...)` is none.
 fn configuration_predicates(code: &str) -> Vec<String> {
+    let attributes = attribute_spans(code);
     let mut found = Vec::new();
     for (at, word) in configuration_words(code) {
         let rest = &code[at + word.len()..];
-        let arguments = match word {
-            "cfg_attr" => rest.strip_prefix('(').map(|arguments| (true, arguments)),
-            "cfg" => rest
-                .strip_prefix("!(")
-                .or_else(|| rest.strip_prefix('('))
-                .map(|arguments| (false, arguments)),
+        let in_attribute = attributes
+            .iter()
+            .any(|&(start, end)| (start..end).contains(&at));
+        let macro_call = rest.starts_with('!');
+        if !in_attribute && !macro_call && !in_use_item(code, at) {
+            continue;
+        }
+        let arguments = match (word, in_attribute, macro_call) {
+            ("cfg_attr", true, false) => rest.strip_prefix('(').map(|arguments| (true, arguments)),
+            ("cfg", true, false) => rest.strip_prefix('(').map(|arguments| (false, arguments)),
+            ("cfg", _, true) => rest.strip_prefix("!(").map(|arguments| (false, arguments)),
             _ => None,
         };
         let Some((attribute, arguments)) = arguments else {
@@ -734,6 +774,81 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
     let selected = normalize("cfg_select! { test => { const A: u8 = 1; } _ => {} }");
     assert_eq!(configuration_predicates(&selected), ["cfg_select"]);
     assert!(conditional(&selected));
+    let imported = normalize("use core::cfg_select as pick; pick! { test => {} _ => {} }");
+    assert_eq!(configuration_predicates(&imported), ["cfg_select"]);
+    let ordinary = normalize("fn cfg_for_pool() {} fn b() { let cfg = 1; cfg_for_pool(); }");
+    assert_eq!(configuration_predicates(&ordinary), Vec::<String>::new());
+}
+
+// A family can reach the generator's internal arms, so the emitting arm
+// itself admits only a literal or a literal include path. rustc compiles the
+// generator against a stub: a declared literal builds, and a constant handed
+// straight to the emitting arm does not.
+#[test]
+fn the_statement_generator_admits_only_literal_text() {
+    let source = fs::read_to_string(manifest_directory().join("src/statements.rs"))
+        .expect("statements.rs is readable");
+    let start = source
+        .find("macro_rules! statements {")
+        .expect("statements.rs defines the generator");
+    let end = start + source[start..].find("\n}\n").expect("the generator ends") + 3;
+    let generator = &source[start..end];
+    let started = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "runlimit-generator-{}-{started}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).expect("create the probe directory");
+    let build = |family: &str| {
+        let file = directory.join("probe.rs");
+        fs::write(
+            &file,
+            format!(
+                "pub mod statements {{ #[derive(Clone, Copy)] pub struct Statement; }}\n\
+                 {generator}\n\
+                 pub mod family {{\n\
+                 impl Id {{ pub(crate) const fn statement(self) -> crate::statements::Statement {{\n\
+                 crate::statements::Statement }} }}\n\
+                 {family}\n}}\n"
+            ),
+        )
+        .expect("write the probe");
+        let output = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .current_dir(manifest_directory())
+            .args([
+                "--edition",
+                "2024",
+                "--crate-type",
+                "lib",
+                "--emit",
+                "metadata",
+                "-o",
+            ])
+            .arg(directory.join("probe.rmeta"))
+            .arg(&file)
+            .output()
+            .expect("run rustc");
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+    let declared = build("statements! { SAMPLE = \"SELECT 1\"; }");
+    let constant =
+        build("const TEXT: &str = \"SELECT 1\"; statements!(@emit { [] SAMPLE literal TEXT });");
+    fs::remove_dir_all(&directory).expect("remove the probe directory");
+    assert!(declared.0, "a declared literal builds:\n{}", declared.1);
+    assert!(!constant.0, "a constant must not build");
+    assert!(
+        constant
+            .1
+            .contains("a statement's text is a string literal"),
+        "{}",
+        constant.1
+    );
 }
 
 #[test]
