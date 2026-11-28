@@ -72,20 +72,6 @@ fn command_form(sql: &str) -> Option<String> {
     {
         return Some("more than one command".to_owned());
     }
-    // `SELECT ... INTO` creates a table; only `INSERT INTO` writes one. INTO
-    // is reserved, so the word is always the keyword.
-    let words: Vec<String> = code
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|word| !word.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect();
-    if words
-        .iter()
-        .enumerate()
-        .any(|(at, word)| word == "into" && (at == 0 || words[at - 1] != "insert"))
-    {
-        return Some("a SELECT INTO, which creates a table".to_owned());
-    }
     let first = code
         .trim_start()
         .split(|c: char| !c.is_ascii_alphabetic())
@@ -253,20 +239,6 @@ fn only_the_listed_catalog_functions_may_be_called() {
         Some("more than one command".to_owned())
     );
     assert_eq!(command_form("SELECT 1; -- done\n"), None);
-    for creates in [
-        "SELECT 1 AS n INTO TEMP TABLE quota_sample",
-        "WITH s AS (SELECT 1 AS n) SELECT n INTO sampled FROM s",
-    ] {
-        assert_eq!(
-            command_form(creates),
-            Some("a SELECT INTO, which creates a table".to_owned()),
-            "{creates}"
-        );
-    }
-    assert_eq!(
-        command_form("WITH w AS (INSERT INTO t (n) VALUES (1) RETURNING n) SELECT n FROM w"),
-        None
-    );
 }
 
 // A statement fails where its family's history alone is installed if it
@@ -297,6 +269,51 @@ fn every_relation_is_a_table_of_the_family_or_a_cte() {
         assert!(
             !fields::unresolved(sql, &tables).is_empty(),
             "{sql} must fail"
+        );
+    }
+}
+
+// Unreserved keywords may name columns and aliases, so a keyword after AS,
+// or a command word anywhere but where a command begins, is a name.
+#[test]
+fn a_keyword_used_as_a_name_is_a_name() {
+    let tables = inventory(&[("t", &["id", "shard", "used"]), ("u", &["id", "label"])]);
+    for sql in [
+        // A keyword used as a name is a name: it neither ends the FROM list
+        // nor opens a command, and a bare one that would hide the rest fails.
+        "SELECT 1 FROM t AS set, elsewhere",
+        "SELECT 1 FROM t set, elsewhere",
+        "SELECT 1 AS delete FROM t, elsewhere",
+        "SELECT 1 delete FROM t, elsewhere",
+        "SELECT (1) delete FROM t, elsewhere",
+        "SELECT 1 AS update FROM t, elsewhere",
+        // SELECT INTO creates a table, whatever word precedes INTO.
+        "SELECT 1 AS n INTO sampled",
+        "WITH s AS (SELECT 1 AS n) SELECT n INTO sampled FROM s",
+        "SELECT 1 AS insert INTO sampled",
+        "SELECT 1 insert INTO sampled",
+    ] {
+        assert!(
+            !fields::unresolved(sql, &tables).is_empty(),
+            "{sql} must fail"
+        );
+    }
+    for sql in [
+        "WITH c AS (SELECT 1 AS id OFFSET 0) SELECT c.id FROM c",
+        "WITH c AS (SELECT 1 AS limit, 2 AS n FROM t) SELECT c.limit, c.n FROM c",
+        "WITH c AS (SELECT pg_catalog.percentile_cont(0.5) WITHIN GROUP (ORDER BY t.used) AS p FROM t) \
+         SELECT c.p FROM c",
+        "SELECT s.id FROM t AS set JOIN u AS s ON s.id = set.id",
+        "WITH w AS (INSERT INTO u (id) VALUES (1) RETURNING id) SELECT w.id FROM w",
+        "WITH w AS (SELECT 1 AS n) INSERT INTO t (id) SELECT w.n FROM w",
+        "WITH w AS (SELECT 1 AS n) UPDATE t SET used = w.n FROM w WHERE t.id = w.n",
+        "WITH w AS (SELECT 1 AS n) DELETE FROM t USING w WHERE t.id = w.n",
+        "WITH w AS MATERIALIZED (DELETE FROM u RETURNING id) SELECT w.id FROM w",
+    ] {
+        assert_eq!(
+            fields::unresolved(sql, &tables),
+            Vec::<String>::new(),
+            "{sql}"
         );
     }
 }

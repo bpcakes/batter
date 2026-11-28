@@ -132,11 +132,14 @@ pub(super) fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     if is(tokens, index, "with") && is(tokens, index + 1, "ordinality") {
         index += 2;
     }
-    if is(tokens, index, "as") {
+    let explicit = is(tokens, index, "as");
+    if explicit {
         index += 1;
     }
+    // After AS any word is the alias, `AS set` included; a bare word is one
+    // unless it opens a clause.
     let alias = word(tokens, index)
-        .filter(|candidate| !CLAUSE_WORDS.contains(candidate))
+        .filter(|candidate| explicit || !CLAUSE_WORDS.contains(candidate))
         .map(str::to_owned);
     if alias.is_some() {
         index += 1;
@@ -226,6 +229,26 @@ const FROM_ENDS: [&str; 13] = [
     "for",
     "returning",
 ];
+
+/// Whether the token at `index` may follow a FROM item: the end of its
+/// block or statement, a comma, a join or its condition, a clause that ends
+/// the list, or `SET` after an UPDATE target. Anything else, such as a
+/// keyword read as a bare alias (`FROM t set, u`), would hide the rest of
+/// the list.
+pub(super) fn ends_from_item(tokens: &[Token], index: usize, target: bool) -> bool {
+    match tokens.get(index) {
+        None => true,
+        Some(Token::Punct(c)) => matches!(c, ',' | ')' | ';'),
+        Some(Token::Word(w)) => {
+            let w = w.as_str();
+            ["on", "using", "join"].contains(&w)
+                || JOIN_WORDS.contains(&w)
+                || FROM_ENDS.contains(&w)
+                || target && w == "set"
+        }
+        Some(Token::Other) => false,
+    }
+}
 
 /// Where the FROM item after the one ending at `index` starts, past its
 /// join condition and the comma or join words, or `None` after the last.

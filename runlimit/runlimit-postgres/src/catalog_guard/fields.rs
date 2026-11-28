@@ -30,8 +30,8 @@ use super::detector::strip_comments_and_quotes;
 mod from_items;
 
 use from_items::{
-    ColumnList, FromItem, ItemSource, column_list, from_item, in_call_syntax, is_distinct_from,
-    next_from_item, opens_query, using_columns,
+    ColumnList, FromItem, ItemSource, column_list, ends_from_item, from_item, in_call_syntax,
+    is_distinct_from, next_from_item, opens_query, using_columns,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +87,39 @@ fn is(tokens: &[Token], index: usize, expected: &str) -> bool {
 
 fn punct(tokens: &[Token], index: usize, expected: char) -> bool {
     tokens.get(index) == Some(&Token::Punct(expected))
+}
+
+/// The index of the parenthesis opening the one closing at `close`.
+fn opening(tokens: &[Token], close: usize) -> Option<usize> {
+    let mut depth = 0_usize;
+    for index in (0..=close).rev() {
+        match tokens[index] {
+            Token::Punct(')') => depth += 1,
+            Token::Punct('(') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether the command word at `index` begins a command: the statement's
+/// own, a data-modifying CTE body's (`AS (DELETE ...`), or the main one
+/// after the CTE list (`WITH c AS (...) UPDATE ...`). Anywhere else the
+/// word is a name, such as a column label (`SELECT 1 AS delete FROM t`).
+fn opens_command(tokens: &[Token], index: usize) -> bool {
+    let body = |open: usize| {
+        punct(tokens, open, '(')
+            && (is(tokens, open.wrapping_sub(1), "as")
+                || is(tokens, open.wrapping_sub(1), "materialized"))
+    };
+    index == 0
+        || body(index - 1)
+        || punct(tokens, index - 1, ')') && opening(tokens, index - 1).is_some_and(body)
 }
 
 /// The index of the parenthesis closing the one at `open`.
@@ -146,7 +179,7 @@ enum Declared {
 }
 
 /// Words that end a select list.
-const LIST_ENDS: [&str; 10] = [
+const LIST_ENDS: [&str; 13] = [
     "from",
     "where",
     "group",
@@ -157,6 +190,9 @@ const LIST_ENDS: [&str; 10] = [
     "except",
     "order",
     "limit",
+    "offset",
+    "fetch",
+    "for",
 ];
 
 /// The columns that name themselves in the select or `RETURNING` list of
@@ -173,7 +209,13 @@ fn output_names(tokens: &[Token], start: usize, end: usize) -> Option<BTreeSet<S
         let mut from = list;
         let list_end = loop {
             match top_level_word(tokens, from, end, &LIST_ENDS) {
-                Some(at) if is_distinct_from(tokens, at) => {
+                // A word after AS is a name (`SELECT 1 AS limit`), and
+                // `WITHIN GROUP (...)` belongs to an aggregate call.
+                Some(at)
+                    if is_distinct_from(tokens, at)
+                        || is(tokens, at - 1, "as")
+                        || is(tokens, at, "group") && is(tokens, at - 1, "within") =>
+                {
                     from = at + 1;
                 }
                 found => break found.unwrap_or(end),
@@ -326,10 +368,10 @@ fn declarations<'t>(
                 continue;
             }
             // A FROM or USING list is walked whole, joins included.
-            Some("from") if previous == Some("delete") => false,
+            Some("from") if previous == Some("delete") && opens_command(tokens, index - 1) => false,
             Some("from" | "using") => true,
-            Some("update") if !matches!(previous, Some("for" | "do" | "key")) => false,
-            Some("into") if previous == Some("insert") => {
+            Some("update") if opens_command(tokens, index) => false,
+            Some("into") if previous == Some("insert") && opens_command(tokens, index - 1) => {
                 // The target is a table the family installs, aliased or not.
                 match word(tokens, index + 1) {
                     Some(target) if punct(tokens, index + 2, '.') => declarations
@@ -407,10 +449,7 @@ fn record_from_item(
         problem(declarations, "a parenthesized join".to_owned());
     }
     // `table *` and other unread punctuation would hide an alias.
-    if tokens
-        .get(item.end)
-        .is_some_and(|token| matches!(token, Token::Punct(c) if !matches!(c, ',' | ')' | ';')))
-    {
+    if !ends_from_item(tokens, item.end, target) {
         problem(declarations, "unread tokens in a FROM item".to_owned());
     }
     // Every relation an item reads or writes is a table the statement's
@@ -560,6 +599,13 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
         // relation outside any FROM list.
         if is(&tokens, index, "table") {
             found.push("a TABLE query".to_owned());
+        }
+        // `SELECT ... INTO` creates a table; only an INSERT that begins a
+        // command writes one. INTO is reserved, so the word is the keyword.
+        if is(&tokens, index, "into")
+            && !(index > 0 && is(&tokens, index - 1, "insert") && opens_command(&tokens, index - 1))
+        {
+            found.push("a SELECT INTO, which creates a table".to_owned());
         }
         // `JOIN ... USING (columns) AS alias` names a join row the
         // declaration scan does not read.
