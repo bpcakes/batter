@@ -11,7 +11,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use super::{has_token, is_identifier, manifest_directory, normalize, rust_files};
+use super::{is_identifier, manifest_directory, normalize, rust_files};
 
 /// The test-only inventory helpers the shared statement generator defines,
 /// each by its item head and how often it appears. Any other conditional
@@ -126,12 +126,18 @@ fn attribute_spans(code: &str) -> Vec<(usize, usize)> {
 }
 
 /// Whether the word at `at` sits in a `use` item, which could import a
-/// configuration macro under another name.
+/// configuration macro under another name. A use tree holds no `;`, so the
+/// item runs from its `use` keyword to the next one, groups such as
+/// `use core::{cfg_select as pick, fmt};` included; `use<..>` is precise
+/// capturing in a signature, not an import.
 fn in_use_item(code: &str, at: usize) -> bool {
-    let item = code[..at]
-        .rfind([';', '{', '}'])
-        .map_or(0, |boundary| boundary + 1);
-    has_token(&code[item..at], "use")
+    code.match_indices("use").any(|(start, _)| {
+        let after = &code[start + "use".len()..];
+        let keyword = !code[..start].chars().next_back().is_some_and(is_identifier)
+            && !after.chars().next().is_some_and(is_identifier)
+            && !after.starts_with('<');
+        keyword && start < at && code[start..].find(';').is_some_and(|end| at < start + end)
+    })
 }
 
 /// The configuration predicates in normalized `code`: each of a `cfg` or
@@ -271,9 +277,21 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
     let selected = normalize("cfg_select! { test => { const A: u8 = 1; } _ => {} }");
     assert_eq!(configuration_predicates(&selected), ["cfg_select"]);
     assert!(conditional(&selected));
-    let imported = normalize("use core::cfg_select as pick; pick! { test => {} _ => {} }");
-    assert_eq!(configuration_predicates(&imported), ["cfg_select"]);
-    let ordinary = normalize("fn cfg_for_pool() {} fn b() { let cfg = 1; cfg_for_pool(); }");
+    for imported in [
+        "use core::cfg_select as pick; pick! { test => {} _ => {} }",
+        "use core::{cfg_select as pick, fmt}; pick! { test => {} _ => {} }",
+        "use core::{fmt, macros::{cfg_select}};",
+    ] {
+        assert_eq!(
+            configuration_predicates(&normalize(imported)),
+            ["cfg_select"],
+            "{imported}"
+        );
+    }
+    let ordinary = normalize(
+        "fn cfg_for_pool() {} fn b() { let cfg = 1; cfg_for_pool(); }
+         fn c() -> impl Sized + use<> { let cfg_x = 1; cfg_x }",
+    );
     assert_eq!(configuration_predicates(&ordinary), Vec::<String>::new());
 }
 
