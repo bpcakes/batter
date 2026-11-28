@@ -1,6 +1,6 @@
-//! Every draft module shares one validation, one integer range and one
-//! [`QuotaState`] input, so the same input fails with the same error and
-//! converts the same way whichever revision a caller selects.
+//! Every draft module shares one validation and one integer range, so the
+//! same name or number fails with the same error whichever revision a caller
+//! selects. The `-11` [`QuotaState`] input is checked here too.
 
 #[path = "fixtures/decisions.rs"]
 mod fixtures;
@@ -8,10 +8,10 @@ mod fixtures;
 use std::time::Duration;
 
 use fixtures::{allowance, fixed_policy, gcra_policy, quota};
-use runlimit_core::{Admitted, RateLimitPolicy};
+use runlimit_core::{Admitted, Allowance, RateLimitPolicy};
 use runlimit_http::{
-    EncodingError, HeaderField, MAX_POLICY_NAME_LENGTH, MAX_STRUCTURED_FIELD_INTEGER, QuotaState,
-    draft_11, draft_12,
+    EncodingError, HeaderField, MAX_POLICY_NAME_LENGTH, MAX_STRUCTURED_FIELD_INTEGER, draft_11,
+    draft_11::QuotaState, draft_12,
 };
 
 type Outcome = Result<HeaderField, EncodingError>;
@@ -24,12 +24,11 @@ fn policy_fields<P: RateLimitPolicy>(name: &str, policy: &P) -> [Outcome; 2] {
     ]
 }
 
-/// Runs one state through both drafts' `RateLimit` encoders.
-fn service_fields(name: &str, state: impl Into<QuotaState>) -> [Outcome; 2] {
-    let state = state.into();
+/// Runs one allowance through both drafts' `RateLimit` encoders.
+fn service_fields(name: &str, allowance: Allowance) -> [Outcome; 2] {
     [
-        draft_11::service_limit(name, state),
-        draft_12::service_limit(name, state),
+        draft_11::service_limit(name, allowance),
+        draft_12::service_limit(name, allowance),
     ]
 }
 
@@ -171,19 +170,21 @@ fn the_structured_field_integer_range_is_shared_by_every_draft() {
         ),
         &too_large,
     );
-    assert_all_fail(
-        service_fields(
-            "too-late",
-            allowance(1, 0, Duration::from_secs(MAX_STRUCTURED_FIELD_INTEGER + 1)),
-        ),
-        &too_large,
+    // Only `-11` states a window, so only it can overflow on one.
+    let too_late = Duration::from_secs(MAX_STRUCTURED_FIELD_INTEGER + 1);
+    assert_eq!(
+        draft_11::service_limit("too-late", allowance(1, 0, too_late)).err(),
+        Some(too_large.clone())
     );
-    assert_all_fail(
-        service_fields(
-            "too-late",
-            quota(1, Duration::from_secs(MAX_STRUCTURED_FIELD_INTEGER + 1)),
-        ),
-        &too_large,
+    assert_eq!(
+        draft_11::service_limit("too-late", quota(1, too_late)).err(),
+        Some(too_large)
+    );
+    assert_eq!(
+        draft_12::service_limit("too-late", allowance(1, 0, too_late))
+            .unwrap()
+            .1,
+        "\"too-late\";a=0"
     );
 }
 
@@ -235,18 +236,14 @@ impl From<CountedState<'_>> for QuotaState {
 }
 
 #[test]
-fn an_invalid_name_fails_before_the_callers_conversion_runs() {
+fn an_invalid_name_fails_before_draft_11_converts_the_callers_state() {
     let conversions = std::cell::Cell::new(0);
-    for encode in [draft_11::service_limit, draft_12::service_limit] {
-        assert!(encode("", CountedState(&conversions)).is_err());
-    }
+    assert!(draft_11::service_limit("", CountedState(&conversions)).is_err());
     assert_eq!(
         conversions.get(),
         0,
-        "no encoder converted the state for an unsafe name"
+        "the encoder converted no state for an unsafe name"
     );
-    for encode in [draft_11::service_limit, draft_12::service_limit] {
-        assert!(encode("valid", CountedState(&conversions)).is_ok());
-    }
-    assert_eq!(conversions.get(), 2, "each valid call converted once");
+    assert!(draft_11::service_limit("valid", CountedState(&conversions)).is_ok());
+    assert_eq!(conversions.get(), 1, "a valid call converted once");
 }

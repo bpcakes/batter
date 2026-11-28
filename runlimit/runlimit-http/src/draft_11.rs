@@ -17,9 +17,10 @@
 //! | `RateLimit-Policy` | `"name";q=N;w=S` | `q` quota (3.1.1), `w` window (3.1.3) |
 //! | `RateLimit` | `"name";r=N;t=S` | `r` available quota (4.1.1), `t` effective window (4.1.2) |
 //!
-//! Only the `RateLimit` keys differ from `-12`, which spells them `a` and `w`.
-//! Policy-name validation, the integer range, [`QuotaState`] and
-//! [`EncodingError`] are shared with every draft module at the crate root.
+//! `-12` renames `r` to `a` and reports only what a decision states exactly;
+//! see [`draft_12`](crate::draft_12). Policy-name validation, the integer
+//! range and [`EncodingError`] are shared with every draft module at the
+//! crate root, and [`QuotaState`] is this module's `RateLimit` input.
 //!
 //! This module emits one list member at a time. Applications remain
 //! responsible for selecting policies, combining multiple members when
@@ -27,11 +28,13 @@
 //! Partition keys are intentionally unsupported so subject material cannot be
 //! exposed accidentally.
 
+use http::HeaderName;
 use runlimit_core::RateLimitPolicy;
 
+pub use crate::state::QuotaState;
 use crate::{
-    EncodingError, HeaderField, QuotaState,
-    encoding::{self, ServiceLimitKeys},
+    EncodingError, HeaderField,
+    encoding::{self, Member},
 };
 
 /// Encodes one `-11` `RateLimit-Policy` field.
@@ -70,12 +73,12 @@ pub fn service_limit(
     name: &str,
     state: impl Into<QuotaState>,
 ) -> Result<HeaderField, EncodingError> {
-    encoding::service_limit(
-        name,
-        state,
-        &ServiceLimitKeys {
-            available: "r",
-            window: "t",
-        },
-    )
+    // The name is validated before the caller's conversion runs, so an
+    // unsafe name fails without converting a state whose field is never sent.
+    let member = Member::policy(name)?;
+    let limit = state.into().service_limit();
+    Ok(member
+        .integer("r", limit.available)?
+        .integer("t", limit.effective_window)?
+        .into_field(HeaderName::from_static("ratelimit")))
 }

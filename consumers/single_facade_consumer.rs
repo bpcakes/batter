@@ -480,12 +480,10 @@ async fn run_limiter(limiter: PostgresLimiter, subject: &str) -> Outcome {
     // The application, not the native encoder, chooses the disclosed policy name
     // and the response status this metadata accompanies.
     let (policy_field, _) = draft_12::quota_policy("facade-consumer", &policy)?;
-    let (limit_field, limit_value) = draft_12::service_limit("facade-consumer", exhausted)?;
-    if policy_field.as_str() != "ratelimit-policy"
-        || limit_field.as_str() != "ratelimit"
-        || !limit_value.to_str()?.contains(";a=0;")
-    {
-        return Err("expected draft-12 fields with no remaining quota".into());
+    // A denial does not state the quota that remains, so draft-12 has no
+    // `RateLimit` field for it; its retry delay goes into Retry-After.
+    if policy_field.as_str() != "ratelimit-policy" || exhausted.retry_after().seconds() == 0 {
+        return Err("expected a draft-12 policy field and a retry delay".into());
     }
     println!("facade consumer: native draft-12 response metadata encoded");
     Ok(())

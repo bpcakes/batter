@@ -117,29 +117,6 @@ pub(crate) fn quota_policy<P: RateLimitPolicy + ?Sized>(
         .into_field(HeaderName::from_static("ratelimit-policy")))
 }
 
-/// The parameter keys a draft revision gives a `RateLimit` member's
-/// remaining allowance and its window.
-pub(crate) struct ServiceLimitKeys {
-    pub(crate) available: &'static str,
-    pub(crate) window: &'static str,
-}
-
-/// Encodes one `RateLimit` member for either draft. The policy name is
-/// validated before the caller's conversion runs, so an unsafe name fails
-/// without converting a state whose field would never be sent.
-pub(crate) fn service_limit(
-    name: &str,
-    state: impl Into<crate::QuotaState>,
-    keys: &ServiceLimitKeys,
-) -> Result<HeaderField, EncodingError> {
-    let member = Member::policy(name)?;
-    let limit = state.into().service_limit();
-    Ok(member
-        .integer(keys.available, limit.available)?
-        .integer(keys.window, limit.effective_window)?
-        .into_field(HeaderName::from_static("ratelimit")))
-}
-
 /// The exact whole seconds of a policy's quota period.
 ///
 /// Both drafts define the `RateLimit-Policy` window as a non-zero Integer

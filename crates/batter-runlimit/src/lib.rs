@@ -161,7 +161,7 @@ pub mod native_transport {
     /// let allowance = Allowance::new(policy.quota(), 4, Duration::from_millis(59_500))?;
     /// let (name, value) = draft_12::service_limit("reads", allowance)?;
     /// assert_eq!(name.as_str(), "ratelimit");
-    /// assert_eq!(value.to_str()?, "\"reads\";a=4;w=60");
+    /// assert_eq!(value.to_str()?, "\"reads\";a=4");
     /// # Ok(())
     /// # }
     /// # example().unwrap();

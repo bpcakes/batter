@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use fixtures::{allowance, fixed_policy, gcra_policy, quota};
 use runlimit_core::Admitted;
-use runlimit_http::{QuotaState, draft_11};
+use runlimit_http::draft_11::{self, QuotaState};
 
 fn service_value(state: impl Into<QuotaState>) -> String {
     let (name, value) = draft_11::service_limit("default", state).unwrap();

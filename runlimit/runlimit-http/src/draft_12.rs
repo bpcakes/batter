@@ -12,21 +12,36 @@
 //! | Field | Member | Parameters (`-12` sections) |
 //! | --- | --- | --- |
 //! | `RateLimit-Policy` | `"name";q=N;w=S` | `q` quota (2.1.1), `w` window (2.1.3) |
-//! | `RateLimit` | `"name";a=N;w=S` | `a` available quota (3.1.1), `w` effective window (3.1.2) |
+//! | `RateLimit` | `"name";a=N` | `a` available quota (3.1.1) |
 //!
-//! `RateLimit-Policy` is spelled as in `-11`; `RateLimit` renames `-11`'s `r`
-//! and `t` to `a` and `w`. Policy-name validation, the integer range,
-//! [`QuotaState`] and [`EncodingError`] are shared with every draft module at
-//! the crate root, so an input `-11` rejects fails here with the same error.
+//! `RateLimit-Policy` is spelled as in `-11`, and `RateLimit` renames `-11`'s
+//! `r` to `a`. Policy-name validation, the integer range and
+//! [`EncodingError`] are shared with every draft module at the crate root, so
+//! a name or number `-11` rejects fails here with the same error.
 //!
-//! These optional parts of `-12` are not emitted:
+//! These parts of `-12` are not emitted:
 //!
+//! - `w` (3.1.2), the effective window: "the number of seconds within which
+//!   the client can use no more than the available quota". An allowance
+//!   states the delay until its policy's full capacity is next available,
+//!   which is that window only when the whole quota returns at once, as at a
+//!   fixed window's reset. A GCRA allowance regains units sooner, so a client
+//!   pacing on that delay would wait longer than it must. No decision states
+//!   the window, so this module sends none.
+//! - `RateLimit` for a denial. Its `a` is required, and a
+//!   [`QuotaDenial`](runlimit_core::QuotaDenial) proves only that the
+//!   requested cost did not fit, not how many units remain: with three units
+//!   left, a four-unit check is denied and charges nothing, and `a=0` would
+//!   tell a client to stop although unit-cost requests still succeed.
+//!   [`service_limit`] therefore takes an [`Allowance`] only. A denied
+//!   response can still carry `RateLimit-Policy`, and `Retry-After` from
+//!   [`QuotaDenial::retry_after`](runlimit_core::QuotaDenial::retry_after).
 //! - `qu` (2.1.2): omitted, so a client reads the draft's default unit,
 //!   requests, as `-11` encoding did. A policy whose checks charge another
 //!   unit cannot state it through this module.
 //! - `pk` (2.1.4, 3.1.3): partition keys are unsupported so subject material
 //!   cannot be exposed accidentally.
-//! - `c` (3.1.4), the request's cost in quota units: a [`QuotaState`] does not
+//! - `c` (3.1.4), the request's cost in quota units: an allowance does not
 //!   carry the cost of the check it came from, and a separately supplied
 //!   number could describe a different check, so this module states no cost.
 //! - The `RateLimit-Partition` field (section 4). Its items declare a
@@ -45,11 +60,12 @@
 //! field lines with the same name combine into one field, so names an
 //! application sends together must differ by more than ASCII case.
 
-use runlimit_core::RateLimitPolicy;
+use http::HeaderName;
+use runlimit_core::{Allowance, RateLimitPolicy};
 
 use crate::{
-    EncodingError, HeaderField, QuotaState,
-    encoding::{self, ServiceLimitKeys},
+    EncodingError, HeaderField,
+    encoding::{self, Member},
 };
 
 /// Encodes one `-12` `RateLimit-Policy` field.
@@ -90,16 +106,17 @@ pub fn quota_policy<P: RateLimitPolicy + ?Sized>(
     encoding::quota_policy(name, policy)
 }
 
-/// Encodes one `-12` `RateLimit` field.
+/// Encodes one `-12` `RateLimit` field for an allowance.
 ///
-/// The result has the form `"name";a=N;w=S`. An available quota uses the
-/// immediately available allowance and rounds its replenishment delay up to
-/// whole seconds. An exhausted quota uses `a=0` and rounds the backend's retry
-/// delay up in the same way, so `w` never understates the delay the backend
-/// reported at its evaluation instant. It is a snapshot, not a promise of
-/// admission: another request sharing the quota can spend the replenished
-/// units first. Neither creates a `Retry-After` field or chooses an HTTP
-/// status.
+/// The result has the form `"name";a=N`, where `a` is the quota the
+/// allowance leaves available after its check, exactly as the backend
+/// evaluated it. It is a snapshot, not a promise of admission: another
+/// request sharing the quota can spend it first. The optional effective
+/// window `w` is omitted, and a denial has no `RateLimit` field here; the
+/// module documentation explains both. This creates no `Retry-After` field
+/// and chooses no HTTP status. For an [`Admitted`](runlimit_core::Admitted)
+/// outcome, encode the allowance of its `Allowed` view and none for a shadow
+/// denial.
 ///
 /// ```
 /// use runlimit_core::{Allowance, Capacity};
@@ -109,26 +126,29 @@ pub fn quota_policy<P: RateLimitPolicy + ?Sized>(
 /// let allowance = Allowance::new(Capacity::new(100)?, 99, Duration::from_millis(49_001))?;
 /// let (name, value) = runlimit_http::draft_12::service_limit("reads", allowance)?;
 /// assert_eq!(name.as_str(), "ratelimit");
-/// assert_eq!(value.to_str()?, "\"reads\";a=99;w=50");
+/// assert_eq!(value.to_str()?, "\"reads\";a=99");
 /// # Ok(())
 /// # }
 /// # example().unwrap();
 /// ```
 ///
+/// A denial does not compile, since it does not state the quota that
+/// remains:
+///
+/// ```compile_fail,E0308
+/// use runlimit_core::{Capacity, QuotaDenial};
+/// use std::time::Duration;
+///
+/// let denial = QuotaDenial::new(Capacity::new(100).unwrap(), Duration::from_secs(1));
+/// let _ = runlimit_http::draft_12::service_limit("reads", denial);
+/// ```
+///
 /// # Errors
 ///
-/// Returns [`EncodingError`] when the public policy name is unsafe or a
-/// numeric value exceeds the Structured Field integer range.
-pub fn service_limit(
-    name: &str,
-    state: impl Into<QuotaState>,
-) -> Result<HeaderField, EncodingError> {
-    encoding::service_limit(
-        name,
-        state,
-        &ServiceLimitKeys {
-            available: "a",
-            window: "w",
-        },
-    )
+/// Returns [`EncodingError`] when the public policy name is unsafe or the
+/// available quota exceeds the Structured Field integer range.
+pub fn service_limit(name: &str, allowance: Allowance) -> Result<HeaderField, EncodingError> {
+    Ok(Member::policy(name)?
+        .integer("a", allowance.available())?
+        .into_field(HeaderName::from_static("ratelimit")))
 }

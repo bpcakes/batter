@@ -241,15 +241,15 @@ wire format it emits:
 
 | Module | Revision | `RateLimit-Policy` | `RateLimit` |
 | --- | --- | --- | --- |
-| `draft_12` (use this) | `draft-ietf-httpapi-ratelimit-headers-12`, 2026-11-20, current | `"name";q=N;w=S` | `"name";a=N;w=S` |
+| `draft_12` (use this) | `draft-ietf-httpapi-ratelimit-headers-12`, 2026-11-20, current | `"name";q=N;w=S` | `"name";a=N` |
 | `draft_11` | `draft-ietf-httpapi-ratelimit-headers-11`, 2026-05-23, expired 2026-11-24 | `"name";q=N;w=S` | `"name";r=N;t=S` |
 
 New code uses `draft_12`. `draft_11` still emits exactly the `-11` fields, so an
-application whose clients parse `r` and `t` can switch them to `a` and `w` as a
+application whose clients parse `r` and `t` can switch them to `-12` as a
 staged rollout; its removal is tracked as `batter-6u2p` and announced in the
 [changelog](CHANGELOG.md). Both modules share one validation at the crate root:
-the same input fails with the same `runlimit_http::EncodingError` whichever
-revision is selected.
+the same name or number fails with the same `runlimit_http::EncodingError`
+whichever revision is selected.
 
 The helpers return typed HTTP header names and values. They do not select a
 response status or body, emit `Retry-After`, expose partition keys, or decide
@@ -264,28 +264,33 @@ Use the same name for a policy in `RateLimit-Policy` and for its allowance in
 rounded up. Encoding also rejects quota values outside RFC 9651's Structured
 Field integer range.
 
-`draft_12::service_limit` (like `draft_11::service_limit`) accepts only the
-states a `RateLimit` field can describe: an `Allowance`, a `QuotaDenial`, or an
-`Admitted` outcome, each of which converts into `runlimit_http::QuotaState`. A
-handler passes `admission.decision()` straight through; a shadow denial then
-exposes the service value that enforcement would have applied. A rejection
-mapper matches its `Denial` and passes the `QuotaDenial` from the
-`QuotaExceeded` arm. A storage-capacity denial has no quota service metadata
-and is not accepted, so it cannot become an encoding error in the response
-path.
+`draft_12::service_limit` accepts only an `Allowance` and states its exact
+available quota, `a`. It sends no effective window `w`, because an allowance's
+delay is the time until its policy's full capacity returns, which is the window
+within which no more than `a` can be used only when the whole quota returns at
+once, as at a fixed window's reset. It encodes no denial, because a denial
+proves only that the requested cost did not fit, not how many units remain;
+a rejection mapper sends `Retry-After` from `QuotaDenial::retry_after` instead.
+A handler holding an `Admitted` outcome encodes the allowance of its `Allowed`
+view. A storage-capacity denial has no quota service metadata at all.
+`draft_11::service_limit` keeps its `-11` behaviour: it accepts a
+`draft_11::QuotaState` built from an `Allowance`, a `QuotaDenial` or an
+`Admitted` outcome, and reports `r` and `t` for each.
 
 ```rust
 use std::time::Duration;
 
-use runlimit_core::{Capacity, QuotaDenial};
+use runlimit_core::{Allowance, Capacity, QuotaDenial};
 use runlimit_http::draft_12;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
-// A 4.2 s retry delay rounds up: `w` never understates the backend's delay.
-let denial = QuotaDenial::new(Capacity::new(100)?, Duration::from_millis(4_200));
-let (name, value) = draft_12::service_limit("default", denial)?;
+let allowance = Allowance::new(Capacity::new(100)?, 99, Duration::from_secs(50))?;
+let (name, value) = draft_12::service_limit("default", allowance)?;
 assert_eq!(name.as_str(), "ratelimit");
-assert_eq!(value, "\"default\";a=0;w=5");
+assert_eq!(value, "\"default\";a=99");
+// A denial's retry delay goes into Retry-After, rounded up to whole seconds.
+let denial = QuotaDenial::new(Capacity::new(100)?, Duration::from_millis(4_200));
+assert_eq!(denial.retry_after().seconds(), 5);
 # Ok(())
 # }
 ```

@@ -475,8 +475,8 @@ for Structured Field syntax, whose Integer range is the
 
 | `-11` key | `-12` key | Requirement | Meaning | `runlimit-http` |
 | --- | --- | --- | --- | --- |
-| `r` | `a` | required | available quota, a non-negative Integer of quota units | allowance's `available`, or `0` when exhausted |
-| `t` | `w` | optional | effective window: "the number of seconds within which the client can use no more than the available quota", a non-negative Integer compatible with delay-seconds | `Delay::seconds` of the replenishment or retry delay, rounded up |
+| `r` | `a` | required | available quota, a non-negative Integer of quota units | `-11`: allowance's `available`, or `0` when exhausted. `-12`: allowance's `available`; a denial has no field, since it proves only that its cost did not fit |
+| `t` | `w` | optional | effective window: "the number of seconds within which the client can use no more than the available quota", a non-negative Integer compatible with delay-seconds | `-11`: `Delay::seconds` of the replenishment or retry delay, rounded up. `-12`: omitted, since an allowance's delay is the time to full capacity, which is that window only when the whole quota returns at once |
 | `pk` | `pk` | optional | partition key, a Byte Sequence | omitted |
 | none | `c` | optional | "the cost of the corresponding request in quota units", a non-negative Integer (`-12` section 3.1.4) | omitted: a decision does not carry its check's cost |
 
@@ -504,5 +504,7 @@ Other differences that bear on the encoder:
   selection stays with the application.
 - Both revisions say a `Retry-After` value "SHOULD NOT reference a point in time
   earlier than the end of the effective window" and that clients "MUST NOT
-  assume that all its service limit will be fully restored" after it. Rounding
-  the window up keeps it no earlier than the backend's own delay.
+  assume that all its service limit will be fully restored" after it. `-11`
+  rounds the window up, which keeps it no earlier than the backend's own
+  delay; `-12` states no window, and a denial's `Retry-After` comes from its
+  retry delay.

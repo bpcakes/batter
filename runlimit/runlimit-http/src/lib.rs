@@ -15,13 +15,15 @@
 //!   2026. It stays selectable so an application can move clients that parse
 //!   `-11` deliberately, and its removal is tracked as `batter-6u2p`.
 //!
-//! The two differ only in the `RateLimit` parameter keys: `-11` spells the
-//! available quota and the effective window `r` and `t`, `-12` spells them
-//! `a` and `w`. Everything else is shared and lives at this crate root: the
-//! [`QuotaState`] input, the [`HeaderField`] output, one policy-name
-//! validation and RFC 9651 integer range ([`MAX_POLICY_NAME_LENGTH`],
-//! [`MAX_STRUCTURED_FIELD_INTEGER`]) and one [`EncodingError`], so both
-//! revisions reject the same input with the same error.
+//! Both revisions share their `RateLimit-Policy` encoding, the
+//! [`HeaderField`] output, one policy-name validation and RFC 9651 integer
+//! range ([`MAX_POLICY_NAME_LENGTH`], [`MAX_STRUCTURED_FIELD_INTEGER`]) and
+//! one [`EncodingError`], all at this crate root, so both reject the same
+//! input with the same error. Their `RateLimit` encoders differ: `-11`'s
+//! takes a [`draft_11::QuotaState`] and reports `r` and `t`, while `-12`'s
+//! takes an [`Allowance`](runlimit_core::Allowance) and reports only its
+//! exact available quota `a`, since no decision states the effective window
+//! and a denial does not state the quota that remains (see [`draft_12`]).
 
 mod encoding;
 mod state;
@@ -32,4 +34,3 @@ pub mod draft_12;
 pub use encoding::{
     EncodingError, HeaderField, MAX_POLICY_NAME_LENGTH, MAX_STRUCTURED_FIELD_INTEGER,
 };
-pub use state::QuotaState;
