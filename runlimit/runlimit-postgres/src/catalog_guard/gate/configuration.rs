@@ -125,15 +125,28 @@ fn attribute_spans(code: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// Whether the word at `at` sits in a `use` item that could import a
+/// The configuration items a `use` item could import under another name:
+/// the pinned toolchain's stable `cfg!` and `cfg_select!`, and the unstable
+/// spellings a later toolchain might stabilize.
+const CONFIGURATION_ITEMS: [&str; 6] = [
+    "cfg",
+    "cfg_accessible",
+    "cfg_attr",
+    "cfg_eval",
+    "cfg_match",
+    "cfg_select",
+];
+
+/// Whether `word`, at `at`, sits in a `use` item that could import a
 /// configuration macro under another name. A use tree holds no `;`, so the
 /// item runs from its `use` keyword to the next one, groups such as
 /// `use core::{cfg_select as pick, fmt};` included; `use<..>` is precise
-/// capturing in a signature, not an import. An import from the crate itself
-/// (`use crate::cfg_for_pool;`) selects nothing, since a crate macro that
-/// wraps a configuration macro is caught where it invokes it; any other
-/// root, a leading group included, counts.
-fn in_use_item(code: &str, at: usize) -> bool {
+/// capturing in a signature, not an import. A configuration item counts
+/// whatever its path, since a local module may alias another crate
+/// (`use core as platform;`). Another `cfg` word counts unless the path
+/// starts in the crate itself (`use crate::cfg_for_pool;`), since a crate
+/// macro that wraps a configuration macro is caught where it invokes it.
+fn in_use_item(code: &str, at: usize, word: &str) -> bool {
     code.match_indices("use").any(|(start, _)| {
         let after = &code[start + "use".len()..];
         let keyword = !code[..start].chars().next_back().is_some_and(is_identifier)
@@ -147,7 +160,7 @@ fn in_use_item(code: &str, at: usize) -> bool {
         keyword
             && start < at
             && code[start..].find(';').is_some_and(|end| at < start + end)
-            && !["crate", "self", "super"].contains(&root)
+            && (CONFIGURATION_ITEMS.contains(&word) || !["crate", "self", "super"].contains(&root))
     })
 }
 
@@ -165,7 +178,7 @@ fn configuration_predicates(code: &str) -> Vec<String> {
             .iter()
             .any(|&(start, end)| (start..end).contains(&at));
         let macro_call = rest.starts_with('!');
-        if !in_attribute && !macro_call && !in_use_item(code, at) {
+        if !in_attribute && !macro_call && !in_use_item(code, at, word) {
             continue;
         }
         let arguments = match (word, in_attribute, macro_call) {
@@ -293,6 +306,7 @@ fn clippy_lints_every_configuration_the_crate_compiles() {
         "use core::{cfg_select as pick, fmt}; pick! { test => {} _ => {} }",
         "use core::{fmt, macros::{cfg_select}};",
         "use {core::cfg_select as pick};",
+        "use core as platform; use self::platform::cfg_select as select; select! { test => {} }",
     ] {
         assert_eq!(
             configuration_predicates(&normalize(imported)),
