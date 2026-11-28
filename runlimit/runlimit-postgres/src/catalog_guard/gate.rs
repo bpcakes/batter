@@ -100,6 +100,7 @@ const TYPES: &[&str] = &[
     "sqlx::AssertSqlSafe",
     "sqlx::SqlStr",
     "sqlx::QueryBuilder",
+    "sqlx::query_builder::Separated",
     "sqlx::RawSql",
     "sqlx::migrate::Migration",
     "sqlx::postgres::PgListener",

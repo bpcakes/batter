@@ -403,6 +403,14 @@ fn query_builder() {
     let _ = sqlx::QueryBuilder::<Postgres>::new(SQL);
 }
 
+// A caller's builder lends a `Separated` that appends SQL text without naming
+// the builder or calling a disallowed method.
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn caller_supplied_separated(mut separated: sqlx::query_builder::Separated<'_, Postgres, &str>) {
+    separated.push(SQL);
+    separated.push_unseparated(SQL);
+}
+
 #[expect(clippy::disallowed_types, reason = "probe")]
 fn raw_sql_type() {
     let _: Option<sqlx::RawSql> = None;

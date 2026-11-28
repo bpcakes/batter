@@ -80,6 +80,7 @@ disallowed-types = [
     { path = "sqlx::AssertSqlSafe", reason = "SQL text comes only from a Statement" },
     { path = "sqlx::SqlStr", reason = "SQL text comes only from a Statement" },
     { path = "sqlx::QueryBuilder", reason = "SQL text comes only from a Statement" },
+    { path = "sqlx::query_builder::Separated", reason = "it appends SQL text to a builder; SQL text comes only from a Statement" },
     { path = "sqlx::RawSql", reason = "SQL text comes only from a Statement" },
     { path = "sqlx::migrate::Migration", reason = "run only the migrations sqlx::migrate! embeds" },
     { path = "sqlx::postgres::PgListener", reason = "LISTEN statements are built from channel names" },
