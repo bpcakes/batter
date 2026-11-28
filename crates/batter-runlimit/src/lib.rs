@@ -105,10 +105,12 @@ pub mod http;
 ///   failures to a response. It interprets no forwarding header, connection
 ///   metadata or identity, selects no status code or body, and is outside
 ///   Batter's operation deadlines, telemetry and admission ordering.
-/// - `http::draft_11` serializes caller-selected policy and decision metadata
-///   into `draft-ietf-httpapi-ratelimit-headers-11` fields. That Internet-Draft
-///   is an unstable wire contract, not a published RFC, and the versioned module
-///   path is where that instability is disclosed.
+/// - `http::draft_12` serializes caller-selected policy and decision metadata
+///   into `draft-ietf-httpapi-ratelimit-headers-12` fields, the current
+///   revision. `http::draft_11` still encodes the expired `-11` revision for
+///   clients that parse it, and its removal is tracked as `batter-6u2p`. Each
+///   Internet-Draft is an unstable wire contract, not a published RFC, and the
+///   versioned module path is where that instability is disclosed.
 ///
 /// Selecting either feature adds no Batter-owned behaviour and does not enable
 /// `http`, the `axum` feature or the Batter Axum adapter.
@@ -141,8 +143,8 @@ pub mod native_transport {
     /// metadata accompanies.
     ///
     /// ```
-    /// use batter_runlimit::native_transport::http::draft_11;
-    /// use runlimit_core::{FixedWindowPolicy, PolicyId, ScopeId};
+    /// use batter_runlimit::native_transport::http::draft_12;
+    /// use runlimit_core::{Allowance, FixedWindowPolicy, PolicyId, RateLimitPolicy, ScopeId};
     /// use std::time::Duration;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -152,9 +154,14 @@ pub mod native_transport {
     ///     5,
     ///     Duration::from_secs(60),
     /// )?;
-    /// let (name, value) = draft_11::quota_policy("reads", &policy)?;
+    /// let (name, value) = draft_12::quota_policy("reads", &policy)?;
     /// assert_eq!(name.as_str(), "ratelimit-policy");
     /// assert_eq!(value.to_str()?, "\"reads\";q=5;w=60");
+    ///
+    /// let allowance = Allowance::new(policy.quota(), 4, Duration::from_millis(59_500))?;
+    /// let (name, value) = draft_12::service_limit("reads", allowance)?;
+    /// assert_eq!(name.as_str(), "ratelimit");
+    /// assert_eq!(value.to_str()?, "\"reads\";a=4");
     /// # Ok(())
     /// # }
     /// # example().unwrap();

@@ -444,3 +444,67 @@ one ordered array batch, then verifies the whole policy in a separate command.
 This preserves permission/check-hook semantics and detects value drift without
 repeating reset or clearing the statement cache. Native fast paths and already
 held leases retain their documented limits.
+
+## RateLimit header fields, draft revisions -11 and -12 (2026-11-27)
+
+Checked for `batter-39wm.9` on 2026-11-27 against the
+[datatracker record](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/)
+and the plain-text revisions
+[`-11`](https://www.ietf.org/archive/id/draft-ietf-httpapi-ratelimit-headers-11.txt)
+and [`-12`](https://www.ietf.org/archive/id/draft-ietf-httpapi-ratelimit-headers-12.txt).
+The datatracker lists `-12` as the latest version of an active httpapi working
+group Internet-Draft, with IESG state "I-D Exists" and no intended RFC status
+recorded; the draft's own header says Standards Track. It is work in progress,
+not an RFC, and no `-13` was published. `-11` is dated
+23 May 2026 and expired on 24 November 2026; `-12` is dated 20 November 2026 and
+expires on 24 May 2027. Both cite [RFC 9651](https://www.rfc-editor.org/rfc/rfc9651)
+for Structured Field syntax, whose Integer range is the
+`MAX_STRUCTURED_FIELD_INTEGER` bound `runlimit-http` enforces.
+
+`RateLimit-Policy` parameters, identical in both revisions (`-11` section 3.1,
+`-12` section 2.1):
+
+| Key | Requirement | Meaning | `runlimit-http` |
+| --- | --- | --- | --- |
+| `q` | required | quota in quota units, a non-negative Integer | `RateLimitPolicy::quota` |
+| `qu` | optional | quota unit String; default `requests` | omitted |
+| `w` | optional | time window, a non-zero Integer of seconds, no sub-second precision | exact whole seconds of `quota_period`, else `QuotaPeriodNotWholeSeconds` |
+| `pk` | optional | partition key, a Byte Sequence | omitted |
+
+`RateLimit` parameters (`-11` section 4.1, `-12` section 3.1):
+
+| `-11` key | `-12` key | Requirement | Meaning | `runlimit-http` |
+| --- | --- | --- | --- | --- |
+| `r` | `a` | required | available quota, a non-negative Integer of quota units | `-11`: allowance's `available`, or `0` when exhausted. `-12`: allowance's `available`; a denial has no field, since it proves only that its cost did not fit |
+| `t` | `w` | optional | effective window: "the number of seconds within which the client can use no more than the available quota", a non-negative Integer compatible with delay-seconds | `-11`: `Delay::seconds` of the replenishment or retry delay, rounded up. `-12`: omitted, since an allowance's delay is the time to full capacity, which is that window only when the whole quota returns at once |
+| `pk` | `pk` | optional | partition key, a Byte Sequence | omitted |
+| none | `c` | optional | "the cost of the corresponding request in quota units", a non-negative Integer (`-12` section 3.1.4) | omitted: a decision does not carry its check's cost |
+
+Other differences that bear on the encoder:
+
+- `-11` requires each `RateLimit-Policy` item to be a String and calls other
+  parameters comments. `-12` accepts Tokens or Strings for both fields, compares
+  policy identifiers case-insensitively and says "Servers MUST NOT generate
+  multiple items in the same field whose policy identifiers are equivalent"
+  (section 2.1), and makes recipients ignore unknown parameters. Both modules
+  emit one String member per call; the application combines members and keeps
+  their names distinct beyond ASCII case.
+- `-12` section 4 adds a `RateLimit-Partition` field whose items name a policy
+  and declare its partition dimensions. A Boolean dimension such as `user_id`
+  varies across partitions and builds `pk` when both fields are sent (section
+  4.2); a valued one such as `method=GET` means the policy "applies only to
+  requests where that dimension matches the specified value", so a client can
+  tell before sending whether it is relevant (section 4.1), with or without
+  `pk`. A Runlimit subject is an opaque derived key and a policy does not
+  record which requests the application routes to it, so `runlimit-http` does
+  not implement this field; an application that knows those dimensions can
+  send it.
+- `-12` section 5 says servers "SHOULD avoid returning RateLimit header fields
+  in redirection responses"; `-11` section 6 only advised care. Response
+  selection stays with the application.
+- Both revisions say a `Retry-After` value "SHOULD NOT reference a point in time
+  earlier than the end of the effective window" and that clients "MUST NOT
+  assume that all its service limit will be fully restored" after it. `-11`
+  rounds the window up, which keeps it no earlier than the backend's own
+  delay; `-12` states no window, and a denial's `Retry-After` comes from its
+  retry delay.

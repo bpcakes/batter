@@ -2,8 +2,8 @@
 
 use super::Outcome;
 use batter::runlimit::{
-    RunResult,
-    native::{Denial, QuotaDenial},
+    Admission, RunResult,
+    native::{Allowance, Denial, QuotaDenial},
     postgres::BatchCheckError,
 };
 use std::{convert::Infallible, error::Error, fmt};
@@ -43,14 +43,20 @@ impl Error for UnexpectedQuotaOutcome {
     }
 }
 
-pub(super) fn expect_admission(result: QuotaOutcome) -> Outcome {
-    match result {
-        RunResult::Admitted { work: Ok(()), .. } => Ok(()),
-        result => Err(Box::new(UnexpectedQuotaOutcome {
-            expected: "first check must admit",
-            result,
-        })),
+/// The one allowance an admitted single-check batch leaves.
+pub(super) fn expect_admission(result: QuotaOutcome) -> Outcome<Allowance> {
+    if let RunResult::Admitted {
+        admission: Admission::Allowed { allowances },
+        work: Ok(()),
+    } = &result
+        && let [allowance] = allowances.iter().collect::<Vec<_>>()[..]
+    {
+        return Ok(allowance);
     }
+    Err(Box::new(UnexpectedQuotaOutcome {
+        expected: "first check must admit with one allowance",
+        result,
+    }))
 }
 
 pub(super) fn expect_exhaustion(result: QuotaOutcome) -> Outcome<QuotaDenial> {

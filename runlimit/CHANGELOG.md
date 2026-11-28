@@ -9,6 +9,29 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `runlimit_http::draft_12` encodes `draft-ietf-httpapi-ratelimit-headers-12`
+  (20 November 2026), the current revision, and is the recommended module.
+  `draft_12::quota_policy` emits `RateLimit-Policy: "name";q=N;w=S`, as
+  `draft_11` does. `draft_12::service_limit` takes an `Allowance` and emits
+  `RateLimit: "name";a=N` with its exact available quota. It omits the
+  optional effective window `w`, the seconds within which a client can use no
+  more than `a`: an allowance's delay is the time until its policy's full
+  capacity returns, which is that window only when the whole quota returns at
+  once, as at a fixed window's reset, so a GCRA client pacing on it would wait
+  longer than it must. A denial has no `-12` `RateLimit` field, because `a` is
+  required and a denial proves only that the requested cost did not fit, not
+  how many units remain; a denied response carries `Retry-After` from
+  `QuotaDenial::retry_after` and can carry `RateLimit-Policy`. Both modules
+  share one policy-name validation and integer range at the crate root, so a
+  policy name, policy or available quota fails with the same `EncodingError`
+  whichever revision is selected; only `-11` encodes a window, so only it can
+  reject one. `draft_12` omits the optional `c` cost parameter, because a
+  decision does not carry the cost of its check, and does not implement the
+  new `RateLimit-Partition` field, because a Runlimit policy records neither
+  the application's partition dimensions nor which requests it applies to.
+  Golden tests pin both revisions, and the
+  [reference record](../docs/references/http.md#ratelimit-header-fields-draft-revisions--11-and--12-2026-11-27)
+  compares them against the drafts (`batter-39wm.9`).
 - `Allowance::from_usage(capacity, used, replenishes_after)` returns the
   allowance left after `used` units, or `UsageExceedsCapacity` when `used`
   exceeds the capacity, so a backend that stores usage derives its allowance
@@ -86,6 +109,56 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking (`runlimit-http`):** the version-neutral items move from
+  `runlimit_http::draft_11` to the crate root, which `draft_12` and `draft_11`
+  share: `HeaderField`, `EncodingError`, `MAX_POLICY_NAME_LENGTH` and
+  `MAX_STRUCTURED_FIELD_INTEGER`. Their variants, values and messages are
+  unchanged, and no alias remains at the old paths. `QuotaState` stays
+  `draft_11::QuotaState`, the input of `draft_11::service_limit` alone, and
+  `draft_11` keeps `quota_policy` and `service_limit` with unchanged
+  signatures and byte-identical output. Through the facade the same items
+  move from `batter::runlimit::native_transport::http::draft_11` to
+  `batter::runlimit::native_transport::http` (`batter-39wm.9`).
+
+  ```rust,ignore
+  // Before:
+  use runlimit_http::draft_11::{
+      EncodingError, HeaderField, MAX_POLICY_NAME_LENGTH, MAX_STRUCTURED_FIELD_INTEGER,
+  };
+  let encoded: Result<runlimit_http::draft_11::HeaderField, runlimit_http::draft_11::EncodingError> =
+      runlimit_http::draft_11::service_limit("search", state);
+  match encoded {
+      Err(runlimit_http::draft_11::EncodingError::EmptyPolicyName) => {}
+      _ => {}
+  }
+
+  // After: the same items at the crate root; QuotaState stays in draft_11.
+  use runlimit_http::{
+      EncodingError, HeaderField, MAX_POLICY_NAME_LENGTH, MAX_STRUCTURED_FIELD_INTEGER,
+  };
+  let encoded: Result<runlimit_http::HeaderField, runlimit_http::EncodingError> =
+      runlimit_http::draft_11::service_limit("search", state);
+  match encoded {
+      Err(runlimit_http::EncodingError::EmptyPolicyName) => {}
+      _ => {}
+  }
+  ```
+- `runlimit_http::draft_11` now documents that it encodes an expired revision:
+  `-11` (23 May 2026) expired on 24 November 2026. It stays selectable and
+  emits the same bytes as before, because its fields are a wire format clients
+  parse. An application moves its clients from `-11` to `-12` as a staged
+  rollout by switching the module at its call sites: `-12` renames `r` to
+  `a`, sends no effective window, and sends no `RateLimit` field for a
+  denial. `draft_11` will be removed in a later release, tracked as
+  `batter-6u2p`.
+
+  ```rust,ignore
+  // Clients that parse -11: RateLimit: "search";r=49;t=37
+  let (name, value) = runlimit_http::draft_11::service_limit("search", allowance)?;
+  // Clients that parse -12: RateLimit: "search";a=49
+  let (name, value) = runlimit_http::draft_12::service_limit("search", allowance)?;
+  // A denial: -11 sends RateLimit: "search";r=0;t=S, -12 sends Retry-After.
+  ```
 - **Breaking:** `MemoryAttemptLimiter::with_clock(capacity, clock)` is
   removed. A constructor named `with_*` broke the rule that every `with_*`
   is a builder method; the limiter now has the same builder as the quota

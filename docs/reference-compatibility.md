@@ -121,7 +121,8 @@ once against a disposable PostgreSQL 18 database. It applies both migration
 histories, commits a durable enqueue intent and an atomic queue row in one
 transaction, observes the registered native worker execute the promoted intent
 and the enqueued job under Batter's protected lifecycle, admits and then denies a
-native PostgreSQL quota, and encodes that denial's response metadata. Driving a
+native PostgreSQL quota, and encodes the admitted allowance's response
+metadata, with the denial's retry delay for `Retry-After`. Driving a
 request through the native Axum layer is executed separately, through the same
 facade paths, by `crates/batter/tests/native_transport_consumer.rs`.
 The consumer registers pool cleanup through protected startup and retains its
