@@ -19,7 +19,8 @@ The format is based on [Keep a Changelog], and this project adheres to
   shadow denial for a shadow one. The `debug_assert` and saturating
   subtraction that guarded it, their profile-split tests and the release-only
   matrix run are gone. `runlimit-postgres` derives a sampled allowance the
-  same way, and still rejects a database response whose usage exceeds the
+  same way. It still denies a stored counter already over the limit in its
+  preflight, and still rejects an upsert response whose usage exceeds the
   capacity as a storage invariant before commit, not as a denial
   (`batter-39wm.6`).
 - `Capacity::get_i64`, `QuotaPeriod::millis_i64` and `Check::cost_i64` return
