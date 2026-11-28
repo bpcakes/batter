@@ -231,7 +231,8 @@ fn top_level_word(tokens: &[Token], start: usize, end: usize, words: &[&str]) ->
             Token::Punct(')' | ']') => depth = depth.saturating_sub(1),
             _ => {}
         }
-        depth == 0 && words.iter().any(|w| is(tokens, index, w))
+        // A field or label (`x.returning`, `AS returning`) bounds nothing.
+        depth == 0 && !is_name(tokens, index) && words.iter().any(|w| is(tokens, index, w))
     })
 }
 
@@ -444,6 +445,12 @@ fn record_from_item(
     item: &FromItem,
     target: bool,
 ) {
+    // A FROM-item subquery reads its sibling FROM items only after LATERAL.
+    if let ItemSource::Query(start, _) = item.source
+        && !is(tokens, item.start, "lateral")
+    {
+        declarations.blocks.skip_level(start - 1);
+    }
     let problem =
         |declarations: &mut Declarations<'_>, problem: String| declarations.problems.push(problem);
     if let ItemSource::Relation(name) = &item.source
@@ -551,6 +558,7 @@ fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index
             return;
         }
         let close = closing(tokens, next);
+        declarations.blocks.isolate(next);
         let declared = match listed {
             ColumnList::Absent => Declared::Query(next + 1, close),
             ColumnList::Names(columns) => Declared::Columns(columns),
@@ -617,11 +625,18 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
     let excluded = match inserts.as_slice() {
         [into] => {
             let end = enclosing_end(&tokens, *into);
+            // Only the DO UPDATE action reads EXCLUDED: not the conflict
+            // target, DO NOTHING or the RETURNING list after it.
             (*into..end)
                 .find(|&index| opens_on_conflict(&tokens, index))
                 .and_then(|conflict| {
+                    let action = (conflict..end).find(|&index| {
+                        is(&tokens, index, "do") && is(&tokens, index + 1, "update")
+                    })?;
+                    let action_end =
+                        top_level_word(&tokens, action, end, &["returning"]).unwrap_or(end);
                     let target = word(&tokens, into + 1)?;
-                    Some((conflict..end, tables.get(target).cloned()?))
+                    Some((action..action_end, tables.get(target).cloned()?))
                 })
         }
         _ => None,

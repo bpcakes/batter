@@ -279,6 +279,11 @@ fn every_relation_is_a_table_of_the_family_or_a_cte() {
 fn a_keyword_used_as_a_name_is_a_name() {
     let tables = inventory(&[("t", &["id", "shard", "used"]), ("u", &["id", "label"])]);
     for sql in [
+        // RETURNING after a label starts no RETURNING list.
+        "WITH w AS (INSERT INTO t (id, used) SELECT 1 AS returning, 2 AS n RETURNING id) SELECT w.n FROM w",
+        // EXCLUDED is the DO UPDATE action's alone, not RETURNING's.
+        "INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO NOTHING RETURNING EXCLUDED.used",
+        "INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET used = 1 RETURNING EXCLUDED.used",
         // A keyword used as a name is a name: it neither ends the FROM list
         // nor opens a command, and a bare one that would hide the rest fails.
         "SELECT 1 FROM t AS set, elsewhere",
@@ -378,6 +383,12 @@ fn an_alias_is_visible_in_its_block_and_nested_ones() {
         "SELECT a.id FROM t AS a WHERE a.id IN (SELECT 1 FROM u AS b) AND b.id = 1",
         "SELECT a.id FROM t AS a UNION SELECT a.used FROM u AS b",
         "SELECT t.id WHERE EXISTS (SELECT 1 FROM t)",
+        // A FROM-item subquery reads its siblings only after LATERAL, and a
+        // CTE body reads no alias of the main query.
+        "SELECT s.n FROM t AS a CROSS JOIN (SELECT a.used AS n) AS s",
+        "SELECT s.n FROM t AS a, (SELECT a.used AS n) AS s",
+        "SELECT s.n FROM t AS a, (SELECT 1 AS n UNION SELECT a.used) AS s",
+        "WITH c AS (SELECT a.id) SELECT c.id FROM c, t AS a",
         // An outer alias hides its table in nested blocks too.
         "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u WHERE u.id = a.id AND t.id = 1)",
     ] {
@@ -391,6 +402,10 @@ fn an_alias_is_visible_in_its_block_and_nested_ones() {
         "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM u WHERE u.id = a.id)",
         "SELECT t.id FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.id = t.id)",
         "SELECT a.id FROM t AS a UNION SELECT b.id FROM u AS b",
+        "SELECT s.n FROM t AS a CROSS JOIN LATERAL (SELECT a.used AS n) AS s",
+        "SELECT s.n FROM t AS a, LATERAL (SELECT a.used AS n) AS s",
+        // A FROM-item subquery still reads an enclosing query's aliases.
+        "SELECT a.id FROM t AS a WHERE EXISTS (SELECT 1 FROM (SELECT a.used AS n) AS s WHERE s.n = 1)",
         "WITH c AS (SELECT a.id FROM t AS a) SELECT c.id FROM c WHERE EXISTS (SELECT 1 FROM c)",
     ] {
         assert_eq!(
