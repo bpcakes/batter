@@ -548,6 +548,42 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
     }
 }
 
+// Shapes where the call detector and PostgreSQL could read a token apart:
+// a keyword PostgreSQL also accepts as a function name, a character this
+// reader does not tokenize, whitespace only PostgreSQL skips, and a word
+// after a closing parenthesis.
+#[test]
+fn the_detector_reads_each_token_as_postgresql_does() {
+    // A joined subquery is grammar to both readers; a join(...) call is not.
+    let joined = "SELECT a.id FROM t AS a JOIN (SELECT 1 AS n) AS b ON b.n = a.id";
+    assert_eq!(unqualified(joined), Vec::<String>::new());
+    let tables = inventory(&[("t", &["id"])]);
+    assert_eq!(fields::unresolved(joined, &tables), Vec::<String>::new());
+    assert_eq!(unqualified("SELECT join(1)"), ["join(...)"]);
+    // Non-ASCII code is reported, not sliced.
+    assert_eq!(
+        unqualified("SELECT 名 AS label"),
+        ["a non-ASCII character outside a comment or string"]
+    );
+    assert!(catalog_calls("SELECT 名 AS label").is_empty());
+    // A vertical tab or form feed separates tokens for PostgreSQL alone.
+    for sql in ["SELECT floor\u{b}(1)", "SELECT pg_catalog.floor(1)\u{c}"] {
+        assert_eq!(
+            unqualified(sql),
+            ["a control character outside a comment or string"],
+            "{sql:?}"
+        );
+    }
+    // Only a parsed FROM alias owns a column list; another `) word(` calls.
+    for sql in [
+        "SELECT DISTINCT ON (capacity_shard) floor(used) FROM runlimit_fixed_windows",
+        "SELECT DISTINCT ON (k) floor(used) FROM pg_catalog.generate_series(1, 2) floor(v)",
+        "SELECT pg_catalog.count(*) FILTER (WHERE TRUE) lower(1)",
+    ] {
+        assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
+    }
+}
+
 #[test]
 fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
     for sql in [
@@ -597,28 +633,6 @@ fn the_detector_rejects_each_unqualified_shape_and_accepts_syntax() {
         "SELECT 1 -- note\r$tag$x$tag$",
         "SELECT * FROM t, json_to_record($1) AS (insert integer)",
         "SELECT 1 FROM pg_catalog.unnest($1::BIGINT[]) WITH ORDINALITY AS x(v, n), floor(1)",
-    ] {
-        assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
-    }
-    // Non-ASCII code is reported, not sliced.
-    assert_eq!(
-        unqualified("SELECT 名 AS label"),
-        ["a non-ASCII character outside a comment or string"]
-    );
-    assert!(catalog_calls("SELECT 名 AS label").is_empty());
-    // A vertical tab or form feed separates tokens for PostgreSQL alone.
-    for sql in ["SELECT floor\u{b}(1)", "SELECT pg_catalog.floor(1)\u{c}"] {
-        assert_eq!(
-            unqualified(sql),
-            ["a control character outside a comment or string"],
-            "{sql:?}"
-        );
-    }
-    // Only a parsed FROM alias owns a column list; another `) word(` calls.
-    for sql in [
-        "SELECT DISTINCT ON (capacity_shard) floor(used) FROM runlimit_fixed_windows",
-        "SELECT DISTINCT ON (k) floor(used) FROM pg_catalog.generate_series(1, 2) floor(v)",
-        "SELECT pg_catalog.count(*) FILTER (WHERE TRUE) lower(1)",
     ] {
         assert!(!unqualified(sql).is_empty(), "{sql} must be rejected");
     }

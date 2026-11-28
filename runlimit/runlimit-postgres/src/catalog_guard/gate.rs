@@ -104,6 +104,7 @@ const TYPES: &[&str] = &[
     "sqlx::migrate::Migration",
     "sqlx::postgres::PgListener",
     "sqlx::postgres::PgAdvisoryLock",
+    "sqlx::postgres::PgAdvisoryLockGuard",
     "sqlx::testing::TestArgs",
     "sqlx::testing::TestFixture",
     "sqlx::testing::TestContext",

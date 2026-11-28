@@ -466,3 +466,8 @@ fn query_scalar_value(query: sqlx::query::QueryScalar<'_, Postgres, i64, PgArgum
 fn mapped_value<F>(query: sqlx::query::Map<'_, Postgres, F, PgArguments>) {
     drop(query);
 }
+
+#[expect(clippy::disallowed_types, reason = "probe")]
+fn advisory_lock_guard(guard: sqlx::postgres::PgAdvisoryLockGuard<PgConnection>) {
+    drop(guard);
+}

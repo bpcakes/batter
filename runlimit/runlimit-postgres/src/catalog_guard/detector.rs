@@ -21,6 +21,7 @@ const SYNTAX: &[&str] = &[
     "from",
     "greatest",
     "in",
+    "join",
     "lateral",
     "least",
     "materialized",
@@ -186,6 +187,7 @@ pub(super) fn catalog_calls(sql: &str) -> BTreeSet<String> {
 const CONTEXTUAL_SYNTAX: &[&str] = &[
     "conflict",
     "filter",
+    "join",
     "materialized",
     "over",
     "recursive",
@@ -217,6 +219,8 @@ fn is_syntax(code: &str, start: usize, word: &str) -> bool {
         // `ON CONFLICT (target) DO ...`; a conflict target's WHERE is outside
         // this dialect.
         "conflict" => before(0, "on") && after == "do",
+        // `... JOIN (query) AS alias`; a call's argument is never a bare query.
+        "join" => opens_query,
         // `aggregate(...) FILTER (WHERE ...)`.
         "filter" => before(0, ")") && inside == "where",
         // `function(...) OVER (window specification)`.
