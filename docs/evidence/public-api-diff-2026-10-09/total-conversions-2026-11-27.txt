@@ -1,0 +1,24 @@
+batter-39wm.5 public API surface check, 2026-11-27
+
+Before: weed/runlimit-catalog-sql-39wm.4 (the stacked base of this change)
+After: weed/runlimit-total-conversions-39wm.5
+Toolchain: nightly-2026-10-01
+Method: existing surface.py over rustdoc JSON from
+`cargo +nightly-2026-10-01 rustdoc -p <package> --lib --all-features --locked --
+-Zunstable-options --output-format json`, in separate worktrees per tree.
+This is a structural inspection only; supported verification uses the
+unmodified pinned toolchain.
+Result: nothing is removed. runlimit-core gains four methods. surface.py
+compares entries by path and kind, so it cannot see the one signature change:
+`AttemptPolicy::delay_schedule` now returns `Vec<QuotaPeriod>` instead of
+`Vec<Duration>`. That hard cut has its `Breaking:` entry in
+runlimit/CHANGELOG.md and a `Migration:` sentence in its rustdoc.
+runlimit-postgres and runlimit-memory are unchanged.
+
+## runlimit-core: 857 -> 861 entries; 0 removed, 4 added
++ ADDED   method runlimit_core::Allowance::with_replenishes_after
++ ADDED   method runlimit_core::Capacity::get_i64
++ ADDED   method runlimit_core::Check::cost_i64
++ ADDED   method runlimit_core::QuotaPeriod::millis_i64
+## runlimit-postgres: 183 -> 183 entries; 0 removed, 0 added
+## runlimit-memory: 156 -> 156 entries; 0 removed, 0 added

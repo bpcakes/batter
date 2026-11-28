@@ -9,6 +9,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Capacity::get_i64`, `QuotaPeriod::millis_i64` and `Check::cost_i64` return
+  the validated numbers as exact signed 64-bit integers, and
+  `Allowance::with_replenishes_after` replaces an allowance's delay without
+  re-validating its quota. Core checks the bounds that make them exact at
+  compile time. `runlimit-postgres` now binds every policy number, window,
+  cost, batch position, shard and delay through them or through infallible
+  `From` conversions; the per-call-site `expect` conversions are gone.
+  `runlimit-memory` narrows a stored entry's remaining lifetime to a delay in
+  one documented place, shared by quota and storage-capacity denials
+  (`batter-39wm.5`).
 - `AttemptSubject::counter_key` returns the attempt storage identity, the
   policy fingerprint and the subject key, as `Check::counter_key` does for
   quota checks. The memory and PostgreSQL attempt backends identify stored
@@ -62,6 +72,27 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking:** `AttemptPolicy::delay_schedule` returns `Vec<QuotaPeriod>`
+  instead of `Vec<Duration>`. Each element is the same nonzero,
+  whole-millisecond delay, no longer than the maximum delay, so storage
+  converts it with `QuotaPeriod::millis_i64` instead of a fallible
+  millisecond conversion (`batter-39wm.5`).
+
+  ```rust
+  // Before: each delay was a Duration.
+  let millis: Vec<i64> = policy
+      .delay_schedule()
+      .into_iter()
+      .map(|delay| i64::try_from(delay.as_millis()).expect("fits BIGINT"))
+      .collect();
+  // After: each delay is a QuotaPeriod with an exact conversion.
+  let millis: Vec<i64> = policy
+      .delay_schedule()
+      .into_iter()
+      .map(QuotaPeriod::millis_i64)
+      .collect();
+  // A caller that wants the former Duration calls `.duration()`.
+  ```
 - **Breaking:** every operational statement `runlimit-postgres` sends (checks,
   cleanup, attempts and timeout settings) calls catalog functions and casts to
   non-keyword types by their `pg_catalog` names: `set_config`,

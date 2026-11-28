@@ -113,15 +113,12 @@ impl<A: SampledAllowance> Pending<A> {
                     .into_iter()
                     .map(|allowance| {
                         let sampled = allowance.sampled();
-                        Allowance::new(
-                            sampled.capacity(),
-                            sampled.available(),
+                        sampled.with_replenishes_after(
                             sampled
                                 .replenishes_after()
                                 .duration()
                                 .saturating_sub(authoritative_elapsed),
                         )
-                        .expect("a sampled allowance already validated its availability")
                     })
                     .collect(),
             ),

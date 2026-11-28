@@ -428,7 +428,7 @@ fn one_schedule_covers_every_failure_count_and_policy_bound() {
         let policy = policy_of(initial, cap, cap, 1);
         let schedule = policy.delay_schedule();
         assert!(!schedule.is_empty() && schedule.len() <= 65);
-        assert_eq!(schedule.last(), Some(&ms(cap)));
+        assert_eq!(schedule.last().map(|delay| delay.duration()), Some(ms(cap)));
         assert!(schedule.windows(2).all(|pair| pair[0] < pair[1]));
         assert_eq!(policy.delay(0), Duration::ZERO);
         for failures in (1..=130).chain([u32::MAX - 1, u32::MAX]) {
@@ -436,7 +436,7 @@ fn one_schedule_covers_every_failure_count_and_policy_bound() {
             assert_eq!(policy.delay(failures).as_millis(), expected);
             let tabulated = schedule[usize::try_from(failures).unwrap().min(schedule.len()) - 1];
             assert_eq!(
-                tabulated.as_millis(),
+                u128::from(tabulated.millis()),
                 expected,
                 "{initial} {cap} {failures}"
             );

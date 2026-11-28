@@ -7,7 +7,10 @@ use thiserror::Error;
 
 use crate::{
     Clock, MemoryStoreConfig, SystemClock,
-    shards::{BatchSessionError, BoundedShards, CheckSessionError, execute_batch, execute_check},
+    shards::{
+        BatchSessionError, BoundedShards, CheckSessionError, execute_batch, execute_check,
+        remaining_duration,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,7 +22,7 @@ impl Entry {
     pub(crate) fn denial(self, check: &Check<'_>, expires: u128, now: u128) -> Option<QuotaDenial> {
         let limit = check.policy().limit();
         (remaining_quota(limit, self.used) < check.cost())
-            .then(|| QuotaDenial::new(limit, duration_from_millis(expires - now)))
+            .then(|| QuotaDenial::new(limit, remaining_duration(expires - now)))
     }
 
     pub(crate) fn charge(self, check: &Check<'_>, expires: u128, now: u128) -> (Self, Allowance) {
@@ -32,7 +35,7 @@ impl Entry {
             allowance(
                 limit,
                 remaining_quota(limit, entry.used),
-                duration_from_millis(expires - now),
+                remaining_duration(expires - now),
             ),
         )
     }
@@ -356,13 +359,6 @@ impl<C: Clock> Limiter for MemoryStore<C> {
     async fn check_all(&self, checks: &[Check<'_>]) -> Result<BatchDecision, Self::CheckAllError> {
         MemoryStore::check_all(self, checks)
     }
-}
-
-fn duration_from_millis(millis: u128) -> Duration {
-    Duration::from_millis(
-        u64::try_from(millis)
-            .expect("a counter's remaining duration cannot exceed its portable policy window"),
-    )
 }
 
 /// Current bounded-store usage.
