@@ -30,7 +30,7 @@ macro_rules! statements {
         $(#[$attribute:meta])* $name:ident = $reader:ident!($path:literal); $($rest:tt)*
     ) => {
         statements!(@only_include_str $reader);
-        statements!(@munch [$($done)* { [$(#[$attribute])*] $name included $path }] $($rest)*);
+        statements!(@munch [$($done)* { [$(#[$attribute])*] $name $reader $path }] $($rest)*);
     };
     (@munch [$($done:tt)*]
         $(#[$attribute:meta])* $name:ident = $sql:literal; $($rest:tt)*
@@ -48,11 +48,15 @@ macro_rules! statements {
     };
     // Text and file come from the one literal each entry carries, so even a
     // direct `@emit` cannot name a constant: an entry it cannot read falls
-    // through to the catch-all, whose `@munch` rejects it.
+    // through to the catch-all, whose `@munch` rejects it. An included
+    // entry's kind is the family file's own reader, checked again here.
     (@text literal $sql:literal) => { $sql };
-    (@text included $path:literal) => { ::core::include_str!($path) };
+    (@text $reader:ident $path:literal) => {{
+        statements!(@only_include_str $reader);
+        ::core::$reader!($path)
+    }};
     (@file literal $sql:literal) => { None };
-    (@file included $path:literal) => { Some($path) };
+    (@file $reader:ident $path:literal) => { Some($path) };
     (@emit $({ [$($attribute:tt)*] $name:ident $kind:ident $value:literal })+) => {
         /// The statements this family declares.
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
