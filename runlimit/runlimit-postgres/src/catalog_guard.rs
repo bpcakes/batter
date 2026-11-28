@@ -280,6 +280,12 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT a.row_to_json AS row_to_json FROM t AS a",
         "SELECT a.label FROM t AS a JOIN u AS b ON TRUE",
         "SELECT missing.id FROM t",
+        // A TABLE query reads a relation outside any FROM list.
+        "SELECT EXISTS (TABLE elsewhere)",
+        "SELECT EXISTS (TABLE t)",
+        // A DELETE source subquery declares its alias like any FROM item.
+        "DELETE FROM t USING (SELECT u.id FROM u) pg_catalog WHERE pg_catalog.row_to_json IS NULL",
+        "DELETE FROM t USING (SELECT u.id FROM u) AS expired WHERE expired.label IS NULL",
         // Every relation is checked, aliased or not, and so is an INSERT target.
         "SELECT pg_catalog.count(*) FROM elsewhere AS e",
         "SELECT a.id FROM t AS a JOIN elsewhere AS e ON TRUE",
@@ -376,6 +382,8 @@ fn a_qualified_name_must_be_a_column_of_its_receiver() {
         "SELECT pg_catalog.floor(1), $1::pg_catalog.text, s.func(1) FROM t AS s",
         "SELECT o.id FROM t AS o WHERE EXISTS (SELECT 1 FROM u AS r WHERE r.id = o.id)",
         "SELECT a.id FROM t AS a FOR NO KEY UPDATE OF a",
+        "DELETE FROM t USING (SELECT u.id AS gone FROM u) AS expired WHERE t.id = expired.gone",
+        "DELETE FROM t USING (SELECT u.id AS gone FROM u) expired WHERE t.id = expired.gone",
         "WITH s AS (SELECT 1 IS DISTINCT FROM 2 AS changed) SELECT s.changed FROM s",
         "SELECT a.id FROM t AS a JOIN u AS b ON ARRAY[a.id, b.id] = $1, u AS c WHERE c.id = a.id",
         "WITH b(n) AS (SELECT 1), a AS (SELECT b.n FROM b) SELECT a.n FROM a",

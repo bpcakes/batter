@@ -322,7 +322,11 @@ fn declarations<'t>(
             Some("from") if previous == Some("distinct") || in_call_syntax(tokens, index) => {
                 continue;
             }
-            Some("using") if punct(tokens, index + 1, '(') => continue,
+            // A join's `USING (columns)` holds names; `USING (query)` is a
+            // DELETE source, read as a FROM item.
+            Some("using") if punct(tokens, index + 1, '(') && !opens_query(tokens, index + 1) => {
+                continue;
+            }
             // A FROM or USING list is walked whole, joins included.
             Some("from") if previous == Some("delete") => false,
             Some("from" | "using") => true,
@@ -553,10 +557,17 @@ pub(super) fn unresolved(sql: &str, tables: &BTreeMap<String, BTreeSet<String>>)
         if is(&tokens, index, "returning") && is(&tokens, index + 1, "with") {
             found.push("a RETURNING WITH clause".to_owned());
         }
+        // TABLE is reserved, and no accepted command creates or locks a
+        // table, so the word opens a `TABLE name` query, which reads a
+        // relation outside any FROM list.
+        if is(&tokens, index, "table") {
+            found.push("a TABLE query".to_owned());
+        }
         // `JOIN ... USING (columns) AS alias` names a join row the
         // declaration scan does not read.
         if is(&tokens, index, "using")
             && punct(&tokens, index + 1, '(')
+            && !opens_query(&tokens, index + 1)
             && is(&tokens, closing(&tokens, index + 1) + 1, "as")
         {
             found.push("a JOIN USING alias".to_owned());
