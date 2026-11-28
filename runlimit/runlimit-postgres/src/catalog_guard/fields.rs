@@ -192,6 +192,7 @@ fn column_list(tokens: &[Token], open: usize) -> ColumnList {
 #[derive(Clone, Debug)]
 enum ItemSource {
     Relation(String),
+    Qualified(String),
     Query(usize, usize),
     Function,
     Join,
@@ -227,13 +228,18 @@ fn from_item(tokens: &[Token], mut index: usize) -> FromItem {
     } else {
         let mut name = word(tokens, index).unwrap_or_default().to_owned();
         index += 1;
+        let mut qualified = false;
         if punct(tokens, index, '.') && word(tokens, index + 1).is_some() {
             name = word(tokens, index + 1).unwrap_or_default().to_owned();
+            qualified = true;
             index += 2;
         }
         if punct(tokens, index, '(') {
             index = closing(tokens, index) + 1;
             ItemSource::Function
+        } else if qualified {
+            // A schema-qualified relation is no migrated table or CTE.
+            ItemSource::Qualified(name)
         } else {
             ItemSource::Relation(name)
         }
@@ -438,6 +444,9 @@ struct Declarations<'t> {
     tokens: &'t [Token],
     tables: &'t BTreeMap<String, BTreeSet<String>>,
     names: BTreeMap<String, Declared>,
+    /// The names that are common table expressions, the only declared names
+    /// a FROM item can read as a relation.
+    ctes: BTreeSet<String>,
     problems: Vec<String>,
 }
 
@@ -460,7 +469,11 @@ impl Declarations<'_> {
         match self.names.get(name) {
             _ if depth > 8 => None,
             Some(Declared::Columns(columns)) => Some(columns.clone()),
-            Some(Declared::Alias(target)) => self.columns(target, depth + 1),
+            // An alias reads a CTE or a migrated table, never a row alias.
+            Some(Declared::Alias(target)) if self.ctes.contains(target) => {
+                self.columns(target, depth + 1)
+            }
+            Some(Declared::Alias(target)) => self.tables.get(target).cloned(),
             Some(Declared::Query(start, end)) => output_names(self.tokens, *start, *end),
             Some(Declared::Unlisted) => None,
             None => self.tables.get(name).cloned(),
@@ -478,6 +491,7 @@ fn declarations<'t>(
         tokens,
         tables,
         names: BTreeMap::new(),
+        ctes: BTreeSet::new(),
         problems: Vec::new(),
     };
     for index in 0..tokens.len() {
@@ -542,14 +556,17 @@ fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item:
             // or a CTE of this statement, never an untracked relation whose
             // name a declaration elsewhere could stand for.
             ItemSource::Relation(name)
-                if !declarations.tables.contains_key(name)
-                    && !declarations.names.contains_key(name) =>
+                if !declarations.tables.contains_key(name) && !declarations.ctes.contains(name) =>
             {
                 problem(
                     declarations,
                     format!("{name} in FROM is neither a migrated table nor a CTE"),
                 );
             }
+            ItemSource::Qualified(name) => problem(
+                declarations,
+                format!("{name} in FROM is schema-qualified, so it is no migrated table or CTE"),
+            ),
             // A function's implicit row name could shadow another relation.
             ItemSource::Function => problem(
                 declarations,
@@ -569,6 +586,13 @@ fn record_from_item(declarations: &mut Declarations<'_>, tokens: &[Token], item:
             Declared::Unlisted
         }
         (ColumnList::Absent, ItemSource::Relation(name)) => Declared::Alias(name.clone()),
+        (ColumnList::Absent, ItemSource::Qualified(name)) => {
+            problem(
+                declarations,
+                format!("{name} in FROM is schema-qualified, so it is no migrated table or CTE"),
+            );
+            Declared::Unlisted
+        }
         (ColumnList::Absent, ItemSource::Query(start, end)) => Declared::Query(*start, *end),
         (ColumnList::Absent, ItemSource::Function | ItemSource::Join) => Declared::Unlisted,
     };
@@ -610,6 +634,7 @@ fn declare_ctes(declarations: &mut Declarations<'_>, tokens: &[Token], mut index
                 Declared::Unlisted
             }
         };
+        declarations.ctes.insert(name.clone());
         declarations.declare(&name, declared);
         if !punct(tokens, close + 1, ',') {
             return;

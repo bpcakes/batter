@@ -200,6 +200,9 @@ fn alter(
                 columns.insert(column.to_owned());
             }
         }
+        Some("set") if is(action, 1, "schema") => {
+            panic!("ALTER TABLE {table} SET SCHEMA, a move this reader does not track");
+        }
         Some("drop") if !is(action, 1, "constraint") => {
             if let Some(column) = word(action, column_at(1)) {
                 columns.remove(column);
@@ -273,6 +276,7 @@ fn migrations_apply_in_order_so_dropped_and_renamed_names_are_gone() {
          ALTER TABLE t DROP COLUMN key CASCADE;",
         "CREATE TABLE t (old BIGINT); ALTER TABLE t * DROP COLUMN old;",
         "ALTER TABLE missing ADD COLUMN extra BIGINT;",
+        "CREATE TABLE t (id BIGINT); ALTER TABLE t SET SCHEMA archive;",
         "CREATE DOMAIN d AS BIGINT; CREATE TABLE t (old d); DROP DOMAIN d CASCADE;",
         "CREATE TYPE k AS (a BIGINT); CREATE TABLE t (old k); DROP TYPE k CASCADE;",
     ] {
